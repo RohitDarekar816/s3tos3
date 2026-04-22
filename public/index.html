@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S3 Backup Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *{font-family:'Inter',sans-serif}
+    code,.mono{font-family:'JetBrains Mono',monospace}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:#0f172a}
+    ::-webkit-scrollbar-thumb{background:#334155;border-radius:99px}
+    .pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .spin{animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .fade-in{animation:fadeIn .2s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+    .prog{transition:width .4s ease}
+    .card{background:#0f172a;border:1px solid #1e293b;border-radius:12px}
+    .inp{width:100%;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:8px 12px;font-size:13px;color:#f1f5f9;outline:none;transition:border-color .15s}
+    .inp:focus{border-color:#3b82f6}
+    .inp::placeholder{color:#475569}
+    select.inp option{background:#1e293b}
+    textarea.inp{resize:vertical;min-height:72px;font-family:'JetBrains Mono',monospace;font-size:12px}
+    .btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:none;outline:none;white-space:nowrap}
+    .btn:disabled{opacity:.45;cursor:not-allowed}
+    .btn-primary{background:#2563eb;color:#fff}.btn-primary:hover:not(:disabled){background:#3b82f6}
+    .btn-danger{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#f87171}.btn-danger:hover:not(:disabled){background:rgba(239,68,68,.25)}
+    .btn-ghost{background:#1e293b;border:1px solid #334155;color:#94a3b8}.btn-ghost:hover:not(:disabled){background:#334155;color:#f1f5f9}
+    .btn-amber{background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);color:#fbbf24}.btn-amber:hover:not(:disabled){background:rgba(245,158,11,.25)}
+    .btn-purple{background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.3);color:#c084fc}.btn-purple:hover:not(:disabled){background:rgba(168,85,247,.25)}
+    .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:500}
+    .tab-btn{padding:6px 14px;font-size:12px;font-weight:500;border-radius:6px;cursor:pointer;transition:all .15s;border:none;background:transparent;color:#64748b}
+    .tab-btn.active{background:#1e293b;color:#e2e8f0}
+    .tab-btn:hover:not(.active){color:#94a3b8}
+    .log-line{display:grid;grid-template-columns:80px 12px 1fr;gap:8px;padding:2px 0;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.5}
+    .label{display:block;font-size:11px;color:#64748b;margin-bottom:4px}
+    .section-title{font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+    .history-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #1e293b}
+    .history-row:last-child{border-bottom:none}
+    #log-filter-all.active,#log-filter-error.active{background:#334155;color:#e2e8f0;border-color:#475569}
+  </style>
+</head>
+<body style="background:#020617;color:#f1f5f9;min-height:100vh;">
+
+<!-- ── Header ───────────────────────────────────────────────────────────── -->
+<header style="background:#0f172a;border-bottom:1px solid #1e293b;padding:0 24px;">
+  <div style="max-width:1400px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:60px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div style="width:36px;height:36px;background:linear-gradient(135deg,#2563eb,#7c3aed);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><polyline points="4 20 4 15 9 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+      </div>
+      <div>
+        <div style="font-size:16px;font-weight:700;color:white;letter-spacing:-.3px;">S3 Backup Studio</div>
+        <div style="font-size:11px;color:#64748b;">Real-time S3 to S3 synchronization</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div id="status-badge" class="badge" style="background:#1e293b;color:#64748b;border:1px solid #334155;">
+        <span id="status-dot" style="width:7px;height:7px;border-radius:50%;background:#475569;display:inline-block;"></span>
+        <span id="status-label">Idle</span>
+      </div>
+      <div id="elapsed-badge" class="badge" style="background:#1e293b;color:#64748b;border:1px solid #334155;display:none;">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span id="elapsed-text">0s</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main ─────────────────────────────────────────────────────────────── -->
+<main style="max-width:1400px;margin:0 auto;padding:20px 24px;display:grid;grid-template-columns:400px 1fr;gap:20px;align-items:start;">
+
+<!-- ══ LEFT: Config panel ════════════════════════════════════════════════ -->
+<div style="display:flex;flex-direction:column;gap:14px;">
+
+  <!-- Job Manager -->
+  <div class="card" style="padding:14px 16px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+      <span style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Saved Jobs</span>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:10px;">
+      <select id="job-selector" class="inp" style="flex:1;font-size:12px;padding:6px 10px;">
+        <option value="">— Unsaved config —</option>
+      </select>
+      <button class="btn btn-ghost" style="padding:6px 10px;font-size:11px;" onclick="loadSelectedJob()">Load</button>
+      <button class="btn btn-ghost" style="padding:6px 10px;font-size:11px;" onclick="saveJob()">Save</button>
+      <button class="btn btn-danger" style="padding:6px 10px;font-size:11px;" onclick="deleteJob()" id="btn-delete-job" disabled>Del</button>
+    </div>
+    <div style="margin-top:8px;">
+      <label class="label">Job name</label>
+      <input class="inp" id="job-name" type="text" placeholder="e.g. prod-to-dr" style="font-size:12px;padding:6px 10px;" />
+    </div>
+  </div>
+
+  <!-- Config Tabs -->
+  <div style="display:flex;gap:4px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:4px;">
+    <button class="tab-btn active" id="tab-btn-config"         onclick="switchTab('config')">Config</button>
+    <button class="tab-btn"        id="tab-btn-filters"        onclick="switchTab('filters')">Filters</button>
+    <button class="tab-btn"        id="tab-btn-notifications"  onclick="switchTab('notifications')">Notifications</button>
+  </div>
+
+  <!-- ── Tab: Config ──────────────────────────────────────────────────── -->
+  <div id="tab-config">
+
+    <!-- Source -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="width:22px;height:22px;background:rgba(59,130,246,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:white;">Source Bucket</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          <span id="src-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" onclick="testConn('source')"><span id="src-test-label">Test</span></button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div><label class="label">Storage Type</label><select class="inp" id="src-type" onchange="toggleEndpoint('src')"><option value="aws">AWS S3</option><option value="compatible">S3-Compatible (MinIO, DO Spaces, Wasabi…)</option></select></div>
+        <div id="src-endpoint-row" style="display:none;"><label class="label">Endpoint URL</label><input class="inp" id="src-endpoint" type="url" placeholder="https://s3.example.com"/></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Region</label><input class="inp" id="src-region" type="text" placeholder="us-east-1" value="us-east-1"/></div>
+          <div><label class="label">Bucket</label><input class="inp" id="src-bucket" type="text" placeholder="my-bucket"/></div>
+        </div>
+        <div><label class="label">Access Key ID</label><input class="inp" id="src-access-key" type="text" placeholder="AKIAIOSFODNN7EXAMPLE" autocomplete="off"/></div>
+        <div><label class="label">Secret Access Key</label><div style="position:relative;"><input class="inp" id="src-secret-key" type="password" placeholder="••••••••••••••••" autocomplete="off" style="padding-right:34px;"/><button onclick="toggleSecret('src-secret-key')" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+        <div><label class="label">Prefix <span style="color:#475569">(optional)</span></label><input class="inp" id="src-prefix" type="text" placeholder="folder/"/></div>
+      </div>
+    </div>
+
+    <!-- Destination -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="width:22px;height:22px;background:rgba(16,185,129,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:white;">Destination Bucket</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          <span id="dst-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" onclick="testConn('dest')"><span id="dst-test-label">Test</span></button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div><label class="label">Storage Type</label><select class="inp" id="dst-type" onchange="toggleEndpoint('dst')"><option value="aws">AWS S3</option><option value="compatible">S3-Compatible (MinIO, DO Spaces, Wasabi…)</option></select></div>
+        <div id="dst-endpoint-row" style="display:none;"><label class="label">Endpoint URL</label><input class="inp" id="dst-endpoint" type="url" placeholder="https://s3.example.com"/></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Region</label><input class="inp" id="dst-region" type="text" placeholder="us-west-2" value="us-west-2"/></div>
+          <div><label class="label">Bucket</label><input class="inp" id="dst-bucket" type="text" placeholder="backup-bucket"/></div>
+        </div>
+        <div><label class="label">Access Key ID</label><input class="inp" id="dst-access-key" type="text" placeholder="AKIAIOSFODNN7EXAMPLE" autocomplete="off"/></div>
+        <div><label class="label">Secret Access Key</label><div style="position:relative;"><input class="inp" id="dst-secret-key" type="password" placeholder="••••••••••••••••" autocomplete="off" style="padding-right:34px;"/><button onclick="toggleSecret('dst-secret-key')" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      </div>
+    </div>
+
+    <!-- Sync settings -->
+    <div class="card" style="padding:18px;">
+      <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Sync Settings</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Repeat Every (sec, 0=once)</label><input class="inp" id="setting-interval" type="number" value="0" min="0"/></div>
+          <div><label class="label">Concurrency</label><input class="inp" id="setting-concurrency" type="number" value="5" min="1" max="50"/></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Max Bandwidth (MB/s, 0=∞)</label><input class="inp" id="setting-bandwidth" type="number" value="0" min="0" step="0.1"/></div>
+          <div><label class="label">File Timeout (min)</label><input class="inp" id="setting-timeout" type="number" value="30" min="1"/></div>
+        </div>
+        <div><label class="label">Multipart Threshold (MB)</label><input class="inp" id="setting-threshold" type="number" value="100" min="5"/></div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;background:#1e293b;border-radius:8px;">
+          <input type="checkbox" id="setting-delete-orphaned" style="width:14px;height:14px;accent-color:#3b82f6;"/>
+          <div><div style="font-size:12px;font-weight:500;color:#e2e8f0;">Delete orphaned files in destination</div><div style="font-size:11px;color:#475569;">Remove dest files not found in source</div></div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Filters ─────────────────────────────────────────────────── -->
+  <div id="tab-filters" style="display:none;">
+    <div class="card" style="padding:18px;">
+      <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">File Filters</div>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label class="label">Include Patterns <span style="color:#475569;">(blank = include all)</span></label>
+          <textarea class="inp" id="filter-include" placeholder="*.jpg&#10;backups/**&#10;data/*.csv"></textarea>
+          <div style="font-size:11px;color:#475569;margin-top:4px;">One glob pattern per line. Only matching files are synced.</div>
+        </div>
+        <div>
+          <label class="label">Exclude Patterns</label>
+          <textarea class="inp" id="filter-exclude" placeholder="temp/**&#10;*.tmp&#10;.DS_Store"></textarea>
+          <div style="font-size:11px;color:#475569;margin-top:4px;">One glob pattern per line. Matching files are always skipped.</div>
+        </div>
+        <div style="background:#1e293b;border-radius:8px;padding:12px;">
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;margin-bottom:6px;">Pattern examples</div>
+          <div class="mono" style="font-size:11px;color:#64748b;line-height:1.8;">
+            *.jpg &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; → all .jpg files<br>
+            images/** → everything under images/<br>
+            data/*.csv → CSV files directly in data/<br>
+            !secret/** → never use negation (use exclude instead)
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Notifications ───────────────────────────────────────────── -->
+  <div id="tab-notifications" style="display:none;">
+
+    <!-- Webhook -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">Webhook (Slack / Discord / Custom)</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div>
+          <label class="label">Webhook URL</label>
+          <input class="inp" id="notif-webhook-url" type="url" placeholder="https://hooks.slack.com/services/…"/>
+        </div>
+        <div style="display:flex;gap:12px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+            <input type="checkbox" id="notif-webhook-complete" checked style="accent-color:#3b82f6;"/> On complete
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+            <input type="checkbox" id="notif-webhook-failure" checked style="accent-color:#3b82f6;"/> On failure
+          </label>
+        </div>
+        <button class="btn btn-ghost" style="width:100%;font-size:12px;" onclick="testWebhook()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 2 11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Send Test Webhook
+        </button>
+      </div>
+    </div>
+
+    <!-- Email -->
+    <div class="card" style="padding:18px;">
+      <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">Email (SMTP)</div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;">
+          <div><label class="label">SMTP Host</label><input class="inp" id="notif-email-host" type="text" placeholder="smtp.gmail.com"/></div>
+          <div><label class="label">Port</label><input class="inp" id="notif-email-port" type="number" value="587" style="width:72px;"/></div>
+        </div>
+        <div><label class="label">Username</label><input class="inp" id="notif-email-user" type="text" placeholder="user@example.com"/></div>
+        <div><label class="label">Password / App Password</label><div style="position:relative;"><input class="inp" id="notif-email-pass" type="password" placeholder="••••••••" style="padding-right:34px;"/><button onclick="toggleSecret('notif-email-pass')" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+        <div><label class="label">From Address</label><input class="inp" id="notif-email-from" type="email" placeholder="s3backup@example.com"/></div>
+        <div><label class="label">To Address</label><input class="inp" id="notif-email-to" type="email" placeholder="admin@example.com"/></div>
+        <div style="display:flex;gap:12px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+            <input type="checkbox" id="notif-email-complete" checked style="accent-color:#3b82f6;"/> On complete
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+            <input type="checkbox" id="notif-email-failure" checked style="accent-color:#3b82f6;"/> On failure
+          </label>
+        </div>
+        <button class="btn btn-ghost" style="width:100%;font-size:12px;" onclick="testEmail()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          Send Test Email
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div style="display:flex;flex-direction:column;gap:7px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+      <button id="btn-dry-run" class="btn btn-purple" onclick="startDryRun()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Dry Run
+      </button>
+      <button id="btn-start" class="btn btn-primary" onclick="startSync()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Start Sync
+      </button>
+    </div>
+    <button id="btn-stop" class="btn btn-danger" style="display:none;width:100%;" onclick="stopSync()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      Stop Sync
+    </button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+      <button id="btn-retry" class="btn btn-amber" style="display:none;" onclick="retryFailed()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.27"/></svg>
+        <span id="retry-label">Retry Failed</span>
+      </button>
+      <button class="btn btn-ghost" onclick="exportLog()" style="font-size:12px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export Log
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══ RIGHT: Dashboard ══════════════════════════════════════════════════ -->
+<div style="display:flex;flex-direction:column;gap:14px;">
+
+  <!-- Stats Row -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Total Files</div>
+      <div id="stat-total"   style="font-size:26px;font-weight:700;color:white;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">in source</div>
+    </div>
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Synced</div>
+      <div id="stat-synced"  style="font-size:26px;font-weight:700;color:#34d399;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">copied</div>
+    </div>
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Skipped</div>
+      <div id="stat-skipped" style="font-size:26px;font-weight:700;color:#94a3b8;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">up-to-date</div>
+    </div>
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Failed</div>
+      <div id="stat-failed"  style="font-size:26px;font-weight:700;color:#f87171;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">errors</div>
+    </div>
+  </div>
+
+  <!-- Progress + Bandwidth Chart -->
+  <div class="card" style="padding:18px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <span style="font-size:13px;font-weight:600;color:white;">Transfer Progress</span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:12px;color:#64748b;"><span id="stat-size">0 B</span> transferred</span>
+        <span id="stat-rate" style="font-size:12px;color:#64748b;display:none;"></span>
+        <span id="progress-pct" style="font-size:13px;font-weight:600;color:#60a5fa;">0%</span>
+        <span id="dry-run-badge" style="display:none;font-size:10px;font-weight:600;background:rgba(168,85,247,.2);color:#c084fc;border:1px solid rgba(168,85,247,.3);border-radius:4px;padding:2px 6px;">DRY RUN</span>
+      </div>
+    </div>
+    <div style="height:7px;background:#1e293b;border-radius:99px;overflow:hidden;">
+      <div id="progress-bar" class="prog" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#7c3aed);border-radius:99px;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:6px;">
+      <span id="progress-detail" style="font-size:11px;color:#475569;">Waiting to start…</span>
+      <span id="next-sync-label" style="font-size:11px;color:#475569;display:none;"></span>
+    </div>
+
+    <!-- Bandwidth Chart -->
+    <div style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:11px;color:#64748b;">Bandwidth (last 60s)</span>
+        <span id="bw-peak" style="font-size:11px;color:#475569;"></span>
+      </div>
+      <div style="height:70px;">
+        <canvas id="bw-chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline -->
+  <div class="card" style="padding:18px;">
+    <div style="font-size:13px;font-weight:600;color:white;margin-bottom:14px;">Sync Pipeline</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div style="flex:1;text-align:center;">
+        <div style="width:44px;height:44px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.25);border-radius:11px;display:flex;align-items:center;justify-content:center;margin:0 auto 6px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <div style="font-size:12px;font-weight:500;color:#e2e8f0;">Source</div>
+        <div id="pipeline-src" style="font-size:11px;color:#475569;max-width:100px;margin:0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</div>
+      </div>
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:3px;">
+        <div style="flex:1;height:1px;background:linear-gradient(90deg,#334155,#475569);"></div>
+        <div id="pipeline-arrow" style="width:30px;height:30px;border-radius:50%;background:#1e293b;border:1px solid #334155;display:flex;align-items:center;justify-content:center;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div style="flex:1;height:1px;background:linear-gradient(90deg,#475569,#334155);"></div>
+      </div>
+      <div style="flex:1;text-align:center;">
+        <div style="width:44px;height:44px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:11px;display:flex;align-items:center;justify-content:center;margin:0 auto 6px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <div style="font-size:12px;font-weight:500;color:#e2e8f0;">Destination</div>
+        <div id="pipeline-dst" style="font-size:11px;color:#475569;max-width:100px;margin:0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="card" style="padding:18px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <span style="font-size:13px;font-weight:600;color:white;">Activity Log</span>
+      <div style="display:flex;gap:5px;">
+        <button id="log-filter-all"   class="btn btn-ghost active" style="padding:3px 9px;font-size:11px;" onclick="setLogFilter('all')">All</button>
+        <button id="log-filter-error" class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="setLogFilter('error')">Errors</button>
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="clearLog()">Clear</button>
+      </div>
+    </div>
+    <div id="log-container" style="height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:1px;">
+      <div id="log-empty" style="display:flex;align-items:center;justify-content:center;height:100%;color:#334155;font-size:13px;">No activity yet — configure and start sync</div>
+    </div>
+  </div>
+
+  <!-- Sync History -->
+  <div class="card" style="padding:18px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <span style="font-size:13px;font-weight:600;color:white;">Sync History</span>
+      <div style="display:flex;gap:5px;">
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="loadHistory()">Refresh</button>
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="clearHistory()">Clear</button>
+      </div>
+    </div>
+    <div id="history-container" style="max-height:260px;overflow-y:auto;">
+      <div id="history-empty" style="text-align:center;color:#334155;font-size:13px;padding:24px 0;">No sync history yet</div>
+    </div>
+  </div>
+
+</div>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

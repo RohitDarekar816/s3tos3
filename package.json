@@ -1,0 +1,22 @@
+{
+  "name": "s3-backup-studio",
+  "version": "1.0.0",
+  "description": "Real-time S3 to S3 backup and sync tool",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/lib-storage": "^3.600.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^7.2.0",
+    "minimatch": "^10.2.5",
+    "nodemailer": "^8.0.5",
+    "socket.io": "^4.7.5"
+  }
+}
