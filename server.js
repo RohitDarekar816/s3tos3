@@ -267,7 +267,7 @@ process.on('unhandledRejection', (reason) => { log('error', `Unhandled rejection
 
 // ── Start ──────────────────────────────────────────────────────────────────
 
-httpServer.listen(PORT, () => {
-  log('info', `S3 Backup Studio on http://localhost:${PORT} [${NODE_ENV}]`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  log('info', `S3 Backup Studio on http://0.0.0.0:${PORT} [${NODE_ENV}]`);
   if (AUTH_ENABLED) log('info', 'HTTP Basic Auth enabled');
 });
