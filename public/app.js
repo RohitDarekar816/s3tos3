@@ -716,4 +716,38 @@ document.addEventListener('DOMContentLoaded', () => {
   setStatus('idle','Idle');
   refreshJobs();
   loadHistory();
+
+  // ── Event wiring (replaces inline onclick/onchange blocked by CSP) ─────
+  $('src-type').addEventListener('change', () => toggleEndpoint('src'));
+  $('dst-type').addEventListener('change', () => toggleEndpoint('dst'));
+
+  $('tab-btn-config').addEventListener('click', () => switchTab('config'));
+  $('tab-btn-filters').addEventListener('click', () => switchTab('filters'));
+  $('tab-btn-notifications').addEventListener('click', () => switchTab('notifications'));
+
+  $('btn-job-load').addEventListener('click', loadSelectedJob);
+  $('btn-job-save').addEventListener('click', saveJob);
+  $('btn-delete-job').addEventListener('click', deleteJob);
+
+  $('btn-src-test').addEventListener('click', () => testConn('source'));
+  $('btn-src-secret').addEventListener('click', () => toggleSecret('src-secret-key'));
+  $('btn-dst-test').addEventListener('click', () => testConn('dest'));
+  $('btn-dst-secret').addEventListener('click', () => toggleSecret('dst-secret-key'));
+
+  $('btn-dry-run').addEventListener('click', startDryRun);
+  $('btn-start').addEventListener('click', () => startSync());
+  $('btn-stop').addEventListener('click', stopSync);
+  $('btn-retry').addEventListener('click', retryFailed);
+  $('btn-export-log').addEventListener('click', exportLog);
+
+  $('log-filter-all').addEventListener('click', () => setLogFilter('all'));
+  $('log-filter-error').addEventListener('click', () => setLogFilter('error'));
+  $('btn-clear-log').addEventListener('click', clearLog);
+
+  $('btn-history-refresh').addEventListener('click', loadHistory);
+  $('btn-history-clear').addEventListener('click', clearHistory);
+
+  $('btn-test-webhook').addEventListener('click', testWebhook);
+  $('btn-test-email').addEventListener('click', testEmail);
+  $('btn-email-secret').addEventListener('click', () => toggleSecret('notif-email-pass'));
 });

@@ -88,9 +88,9 @@
       <select id="job-selector" class="inp" style="flex:1;font-size:12px;padding:6px 10px;">
         <option value="">— Unsaved config —</option>
       </select>
-      <button class="btn btn-ghost" style="padding:6px 10px;font-size:11px;" onclick="loadSelectedJob()">Load</button>
-      <button class="btn btn-ghost" style="padding:6px 10px;font-size:11px;" onclick="saveJob()">Save</button>
-      <button class="btn btn-danger" style="padding:6px 10px;font-size:11px;" onclick="deleteJob()" id="btn-delete-job" disabled>Del</button>
+      <button class="btn btn-ghost" style="padding:6px 10px;font-size:11px;" id="btn-job-load">Load</button>
+      <button class="btn btn-ghost" style="padding:6px 10px;font-size:11px;" id="btn-job-save">Save</button>
+      <button class="btn btn-danger" style="padding:6px 10px;font-size:11px;" id="btn-delete-job" disabled>Del</button>
     </div>
     <div style="margin-top:8px;">
       <label class="label">Job name</label>
@@ -100,9 +100,9 @@
 
   <!-- Config Tabs -->
   <div style="display:flex;gap:4px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:4px;">
-    <button class="tab-btn active" id="tab-btn-config"         onclick="switchTab('config')">Config</button>
-    <button class="tab-btn"        id="tab-btn-filters"        onclick="switchTab('filters')">Filters</button>
-    <button class="tab-btn"        id="tab-btn-notifications"  onclick="switchTab('notifications')">Notifications</button>
+    <button class="tab-btn active" id="tab-btn-config">Config</button>
+    <button class="tab-btn"        id="tab-btn-filters">Filters</button>
+    <button class="tab-btn"        id="tab-btn-notifications">Notifications</button>
   </div>
 
   <!-- ── Tab: Config ──────────────────────────────────────────────────── -->
@@ -117,18 +117,18 @@
         <span style="font-size:13px;font-weight:600;color:white;">Source Bucket</span>
         <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
           <span id="src-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
-          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" onclick="testConn('source')"><span id="src-test-label">Test</span></button>
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" id="btn-src-test"><span id="src-test-label">Test</span></button>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:9px;">
-        <div><label class="label">Storage Type</label><select class="inp" id="src-type" onchange="toggleEndpoint('src')"><option value="aws">AWS S3</option><option value="compatible">S3-Compatible (MinIO, DO Spaces, Wasabi…)</option></select></div>
+        <div><label class="label">Storage Type</label><select class="inp" id="src-type"><option value="aws">AWS S3</option><option value="compatible">S3-Compatible (MinIO, DO Spaces, Wasabi…)</option></select></div>
         <div id="src-endpoint-row" style="display:none;"><label class="label">Endpoint URL</label><input class="inp" id="src-endpoint" type="url" placeholder="https://s3.example.com"/></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <div><label class="label">Region</label><input class="inp" id="src-region" type="text" placeholder="us-east-1" value="us-east-1"/></div>
           <div><label class="label">Bucket</label><input class="inp" id="src-bucket" type="text" placeholder="my-bucket"/></div>
         </div>
         <div><label class="label">Access Key ID</label><input class="inp" id="src-access-key" type="text" placeholder="AKIAIOSFODNN7EXAMPLE" autocomplete="off"/></div>
-        <div><label class="label">Secret Access Key</label><div style="position:relative;"><input class="inp" id="src-secret-key" type="password" placeholder="••••••••••••••••" autocomplete="off" style="padding-right:34px;"/><button onclick="toggleSecret('src-secret-key')" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+        <div><label class="label">Secret Access Key</label><div style="position:relative;"><input class="inp" id="src-secret-key" type="password" placeholder="••••••••••••••••" autocomplete="off" style="padding-right:34px;"/><button id="btn-src-secret" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
         <div><label class="label">Prefix <span style="color:#475569">(optional)</span></label><input class="inp" id="src-prefix" type="text" placeholder="folder/"/></div>
       </div>
     </div>
@@ -142,18 +142,18 @@
         <span style="font-size:13px;font-weight:600;color:white;">Destination Bucket</span>
         <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
           <span id="dst-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
-          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" onclick="testConn('dest')"><span id="dst-test-label">Test</span></button>
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" id="btn-dst-test"><span id="dst-test-label">Test</span></button>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:9px;">
-        <div><label class="label">Storage Type</label><select class="inp" id="dst-type" onchange="toggleEndpoint('dst')"><option value="aws">AWS S3</option><option value="compatible">S3-Compatible (MinIO, DO Spaces, Wasabi…)</option></select></div>
+        <div><label class="label">Storage Type</label><select class="inp" id="dst-type"><option value="aws">AWS S3</option><option value="compatible">S3-Compatible (MinIO, DO Spaces, Wasabi…)</option></select></div>
         <div id="dst-endpoint-row" style="display:none;"><label class="label">Endpoint URL</label><input class="inp" id="dst-endpoint" type="url" placeholder="https://s3.example.com"/></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <div><label class="label">Region</label><input class="inp" id="dst-region" type="text" placeholder="us-west-2" value="us-west-2"/></div>
           <div><label class="label">Bucket</label><input class="inp" id="dst-bucket" type="text" placeholder="backup-bucket"/></div>
         </div>
         <div><label class="label">Access Key ID</label><input class="inp" id="dst-access-key" type="text" placeholder="AKIAIOSFODNN7EXAMPLE" autocomplete="off"/></div>
-        <div><label class="label">Secret Access Key</label><div style="position:relative;"><input class="inp" id="dst-secret-key" type="password" placeholder="••••••••••••••••" autocomplete="off" style="padding-right:34px;"/><button onclick="toggleSecret('dst-secret-key')" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+        <div><label class="label">Secret Access Key</label><div style="position:relative;"><input class="inp" id="dst-secret-key" type="password" placeholder="••••••••••••••••" autocomplete="off" style="padding-right:34px;"/><button id="btn-dst-secret" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
       </div>
     </div>
 
@@ -225,7 +225,7 @@
             <input type="checkbox" id="notif-webhook-failure" checked style="accent-color:#3b82f6;"/> On failure
           </label>
         </div>
-        <button class="btn btn-ghost" style="width:100%;font-size:12px;" onclick="testWebhook()">
+        <button class="btn btn-ghost" style="width:100%;font-size:12px;" id="btn-test-webhook">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 2 11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           Send Test Webhook
         </button>
@@ -241,7 +241,7 @@
           <div><label class="label">Port</label><input class="inp" id="notif-email-port" type="number" value="587" style="width:72px;"/></div>
         </div>
         <div><label class="label">Username</label><input class="inp" id="notif-email-user" type="text" placeholder="user@example.com"/></div>
-        <div><label class="label">Password / App Password</label><div style="position:relative;"><input class="inp" id="notif-email-pass" type="password" placeholder="••••••••" style="padding-right:34px;"/><button onclick="toggleSecret('notif-email-pass')" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+        <div><label class="label">Password / App Password</label><div style="position:relative;"><input class="inp" id="notif-email-pass" type="password" placeholder="••••••••" style="padding-right:34px;"/><button id="btn-email-secret" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
         <div><label class="label">From Address</label><input class="inp" id="notif-email-from" type="email" placeholder="s3backup@example.com"/></div>
         <div><label class="label">To Address</label><input class="inp" id="notif-email-to" type="email" placeholder="admin@example.com"/></div>
         <div style="display:flex;gap:12px;">
@@ -252,7 +252,7 @@
             <input type="checkbox" id="notif-email-failure" checked style="accent-color:#3b82f6;"/> On failure
           </label>
         </div>
-        <button class="btn btn-ghost" style="width:100%;font-size:12px;" onclick="testEmail()">
+        <button class="btn btn-ghost" style="width:100%;font-size:12px;" id="btn-test-email">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           Send Test Email
         </button>
@@ -263,25 +263,25 @@
   <!-- Controls -->
   <div style="display:flex;flex-direction:column;gap:7px;">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
-      <button id="btn-dry-run" class="btn btn-purple" onclick="startDryRun()">
+      <button id="btn-dry-run" class="btn btn-purple">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Dry Run
       </button>
-      <button id="btn-start" class="btn btn-primary" onclick="startSync()">
+      <button id="btn-start" class="btn btn-primary">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         Start Sync
       </button>
     </div>
-    <button id="btn-stop" class="btn btn-danger" style="display:none;width:100%;" onclick="stopSync()">
+    <button id="btn-stop" class="btn btn-danger" style="display:none;width:100%;">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       Stop Sync
     </button>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
-      <button id="btn-retry" class="btn btn-amber" style="display:none;" onclick="retryFailed()">
+      <button id="btn-retry" class="btn btn-amber" style="display:none;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.27"/></svg>
         <span id="retry-label">Retry Failed</span>
       </button>
-      <button class="btn btn-ghost" onclick="exportLog()" style="font-size:12px;">
+      <button class="btn btn-ghost" id="btn-export-log" style="font-size:12px;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Export Log
       </button>
@@ -381,9 +381,9 @@
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <span style="font-size:13px;font-weight:600;color:white;">Activity Log</span>
       <div style="display:flex;gap:5px;">
-        <button id="log-filter-all"   class="btn btn-ghost active" style="padding:3px 9px;font-size:11px;" onclick="setLogFilter('all')">All</button>
-        <button id="log-filter-error" class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="setLogFilter('error')">Errors</button>
-        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="clearLog()">Clear</button>
+        <button id="log-filter-all"   class="btn btn-ghost active" style="padding:3px 9px;font-size:11px;">All</button>
+        <button id="log-filter-error" class="btn btn-ghost" style="padding:3px 9px;font-size:11px;">Errors</button>
+        <button id="btn-clear-log" class="btn btn-ghost" style="padding:3px 9px;font-size:11px;">Clear</button>
       </div>
     </div>
     <div id="log-container" style="height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:1px;">
@@ -396,8 +396,8 @@
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <span style="font-size:13px;font-weight:600;color:white;">Sync History</span>
       <div style="display:flex;gap:5px;">
-        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="loadHistory()">Refresh</button>
-        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" onclick="clearHistory()">Clear</button>
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" id="btn-history-refresh">Refresh</button>
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" id="btn-history-clear">Clear</button>
       </div>
     </div>
     <div id="history-container" style="max-height:260px;overflow-y:auto;">
