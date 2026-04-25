@@ -56,10 +56,15 @@
       </div>
       <div>
         <div style="font-size:16px;font-weight:700;color:white;letter-spacing:-.3px;">S3 Backup Studio</div>
-        <div style="font-size:11px;color:#64748b;">Real-time S3 to S3 synchronization</div>
+        <div style="font-size:11px;color:#64748b;">Real-time S3 & Database sync</div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
+      <div style="display:flex;gap:4px;background:#1e293b;border-radius:8px;padding:3px;">
+        <button class="tab-btn active" id="mode-s3" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">S3</button>
+        <button class="tab-btn" id="mode-db" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">Database</button>
+        <button class="tab-btn" id="mode-cluster" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">Cluster</button>
+      </div>
       <div id="status-badge" class="badge" style="background:#1e293b;color:#64748b;border:1px solid #334155;">
         <span id="status-dot" style="width:7px;height:7px;border-radius:50%;background:#475569;display:inline-block;"></span>
         <span id="status-label">Idle</span>
@@ -288,13 +293,214 @@
     </div>
   </div>
 
+  <!-- ── Database Config (Hidden by default) ───────────────────────────── -->
+  <div id="db-config-panel" style="display:none;">
+
+    <!-- Source Database -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="width:22px;height:22px;background:rgba(59,130,246,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:white;">Source Database</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          <span id="db-src-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" id="btn-db-src-test"><span id="db-src-test-label">Test</span></button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Host</label><input class="inp" id="db-src-host" type="text" placeholder="localhost" value="localhost"/></div>
+          <div><label class="label">Port</label><input class="inp" id="db-src-port" type="number" placeholder="5432" value="5432"/></div>
+        </div>
+        <div><label class="label">Database</label><input class="inp" id="db-src-database" type="text" placeholder="mydb"/></div>
+        <div><label class="label">Schema</label><input class="inp" id="db-src-schema" type="text" placeholder="public" value="public"/></div>
+        <div><label class="label">Username</label><input class="inp" id="db-src-user" type="text" placeholder="postgres" autocomplete="off"/></div>
+        <div><label class="label">Password</label><div style="position:relative;"><input class="inp" id="db-src-password" type="password" placeholder="••••••••" autocomplete="off" style="padding-right:34px;"/><button id="btn-db-src-secret" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      </div>
+    </div>
+
+    <!-- Destination Database -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="width:22px;height:22px;background:rgba(16,185,129,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:white;">Destination Database</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          <span id="db-dst-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" id="btn-db-dst-test"><span id="db-dst-test-label">Test</span></button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Host</label><input class="inp" id="db-dst-host" type="text" placeholder="localhost" value="localhost"/></div>
+          <div><label class="label">Port</label><input class="inp" id="db-dst-port" type="number" placeholder="5432" value="5432"/></div>
+        </div>
+        <div><label class="label">Database</label><input class="inp" id="db-dst-database" type="text" placeholder="backup_db"/></div>
+        <div><label class="label">Schema</label><input class="inp" id="db-dst-schema" type="text" placeholder="public" value="public"/></div>
+        <div><label class="label">Username</label><input class="inp" id="db-dst-user" type="text" placeholder="postgres" autocomplete="off"/></div>
+        <div><label class="label">Password</label><div style="position:relative;"><input class="inp" id="db-dst-password" type="password" placeholder="••••••••" autocomplete="off" style="padding-right:34px;"/><button id="btn-db-dst-secret" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#64748b;" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      </div>
+    </div>
+
+    <!-- DB Sync Settings -->
+    <div class="card" style="padding:18px;">
+      <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Database Sync Settings</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Repeat Every (sec, 0=once)</label><input class="inp" id="db-setting-interval" type="number" value="0" min="0"/></div>
+          <div><label class="label">Concurrency</label><input class="inp" id="db-setting-concurrency" type="number" value="5" min="1" max="10"/></div>
+        </div>
+        <div>
+          <label class="label">Include Tables <span style="color:#475569">(one per line, blank = all)</span></label>
+          <textarea class="inp" id="db-setting-include-tables" placeholder="users&#10;orders&#10;products" style="min-height:60px;"></textarea>
+        </div>
+        <div>
+          <label class="label">Exclude Tables</label>
+          <textarea class="inp" id="db-setting-exclude-tables" placeholder="logs&#10;audit" style="min-height:60px;"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DB Controls -->
+  <div id="db-controls" style="display:none;flex-direction:column;gap:7px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+      <button id="btn-db-dry-run" class="btn btn-purple">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Dry Run
+      </button>
+      <button id="btn-db-start" class="btn btn-primary">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Start DB Sync
+      </button>
+    </div>
+    <button id="btn-db-stop" class="btn btn-danger" style="display:none;width:100%;">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      Stop Sync
+    </button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+      <button id="btn-db-retry" class="btn btn-amber" style="display:none;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.27"/></svg>
+        <span id="db-retry-label">Retry Failed</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Cluster Config (Hidden by default) ───────────────────────────── -->
+  <div id="cluster-config-panel" style="display:none;">
+
+    <!-- Primary (Source) Database -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="width:22px;height:22px;background:rgba(59,130,246,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:white;">Primary (Source)</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          <span id="cluster-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;"></span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Host</label><input class="inp" id="cluster-src-host" type="text" placeholder="primary.db.example.com"/></div>
+          <div><label class="label">Port</label><input class="inp" id="cluster-src-port" type="number" placeholder="5432" value="5432"/></div>
+        </div>
+        <div><label class="label">Database</label><input class="inp" id="cluster-src-database" type="text" placeholder="mydb"/></div>
+        <div><label class="label">Username</label><input class="inp" id="cluster-src-user" type="text" placeholder="postgres" autocomplete="off"/></div>
+        <div><label class="label">Password</label><input class="inp" id="cluster-src-password" type="password" placeholder="••••••••" autocomplete="off"/></div>
+      </div>
+    </div>
+
+    <!-- Replica (Target) Setup -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="width:22px;height:22px;background:rgba(16,185,129,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:white;">New Replica (Target)</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label">Replica Host</label><input class="inp" id="cluster-dst-host" type="text" placeholder="replica.db.example.com"/></div>
+          <div><label class="label">Port</label><input class="inp" id="cluster-dst-port" type="number" placeholder="5432" value="5432"/></div>
+        </div>
+        <div><label class="label">Database</label><input class="inp" id="cluster-dst-database" type="text" placeholder="mydb"/></div>
+        <div><label class="label">Username</label><input class="inp" id="cluster-dst-user" type="text" placeholder="postgres" autocomplete="off"/></div>
+        <div><label class="label">Password</label><input class="inp" id="cluster-dst-password" type="password" placeholder="••••••••" autocomplete="off"/></div>
+      </div>
+    </div>
+
+    <!-- Cluster Topology Graph -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Cluster Topology</div>
+      <div id="cluster-topology" style="height:120px;background:#0f172a;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:20px;">
+        <div style="text-align:center;">
+          <div style="width:50px;height:50px;background:rgba(59,130,246,.2);border:2px solid #3b82f6;border-radius:50%;display:flex;align-items:center;justify-content:center;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">Primary</div>
+          <div id="cluster-primary-status" style="font-size:10px;color:#34d399;">Connected</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <div class="cluster-arrow" style="width:60px;height:2px;background:linear-gradient(90deg,#3b82f6,#34d399);"></div>
+          <div style="font-size:10px;color:#64748b;text-align:center;">WAL</div>
+        </div>
+        <div style="text-align:center;">
+          <div id="replica-node-1" style="width:40px;height:40px;background:rgba(16,185,129,.2);border:2px solid #34d399;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0.3;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">Replica 1</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <div class="cluster-arrow" style="width:40px;height:2px;background:#475569;"></div>
+        </div>
+        <div style="text-align:center;">
+          <div id="replica-node-2" style="width:35px;height:35px;background:rgba(245,158,11,.2);border:2px solid #fbbf24;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0.3;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">Replica 2</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cluster Actions -->
+    <div style="display:flex;flex-direction:column;gap:7px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+        <button id="btn-cluster-connect" class="btn btn-primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><polyline points="12 2 12 12"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          Connect
+        </button>
+        <button id="btn-cluster-create-replica" class="btn btn-purple">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          Create Replica
+        </button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;">
+        <button id="btn-cluster-refresh" class="btn btn-ghost">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.27"/></svg>
+          Refresh
+        </button>
+        <button id="btn-cluster-promote" class="btn btn-amber">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+          Promote
+        </button>
+        <button id="btn-cluster-disconnect" class="btn btn-danger">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+          Disconnect
+        </button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- ══ RIGHT: Dashboard ══════════════════════════════════════════════════ -->
 <div style="display:flex;flex-direction:column;gap:14px;">
 
   <!-- Stats Row -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+  <div id="s3-stats-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
     <div class="card" style="padding:14px;">
       <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Total Files</div>
       <div id="stat-total"   style="font-size:26px;font-weight:700;color:white;line-height:1;">0</div>
@@ -314,6 +520,30 @@
       <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Failed</div>
       <div id="stat-failed"  style="font-size:26px;font-weight:700;color:#f87171;line-height:1;">0</div>
       <div style="font-size:11px;color:#475569;margin-top:3px;">errors</div>
+    </div>
+  </div>
+
+  <!-- DB Stats Row (hidden by default) -->
+  <div id="db-stats-row" style="display:none;grid-template-columns:repeat(4,1fr);gap:10px;">
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Total Tables</div>
+      <div id="db-stat-tables" style="font-size:26px;font-weight:700;color:white;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">to sync</div>
+    </div>
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Synced</div>
+      <div id="db-stat-synced-tables" style="font-size:26px;font-weight:700;color:#34d399;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">tables</div>
+    </div>
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Rows</div>
+      <div id="db-stat-rows" style="font-size:26px;font-weight:700;color:#60a5fa;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">copied</div>
+    </div>
+    <div class="card" style="padding:14px;">
+      <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Failed</div>
+      <div id="db-stat-failed" style="font-size:26px;font-weight:700;color:#f87171;line-height:1;">0</div>
+      <div style="font-size:11px;color:#475569;margin-top:3px;">tables</div>
     </div>
   </div>
 

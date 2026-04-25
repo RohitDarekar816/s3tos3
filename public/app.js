@@ -711,6 +711,8 @@ socket.on('reconnect',  () => appendLog('info','Reconnected to server'));
 document.addEventListener('DOMContentLoaded', () => {
   initBwChart();
   loadLocalConfig();
+  toggleEndpoint('src');
+  toggleEndpoint('dst');
   updatePipelineLabels();
   $('log-filter-all').classList.add('active');
   setStatus('idle','Idle');
@@ -750,4 +752,354 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btn-test-webhook').addEventListener('click', testWebhook);
   $('btn-test-email').addEventListener('click', testEmail);
   $('btn-email-secret').addEventListener('click', () => toggleSecret('notif-email-pass'));
+
+  // ── Mode Toggle ─────────────────────────────────────────────────────────
+  let currentMode = 's3';
+
+  function switchMode(mode) {
+    currentMode = mode;
+    $('mode-s3').classList.toggle('active', mode === 's3');
+    $('mode-db').classList.toggle('active', mode === 'db');
+    $('mode-cluster').classList.toggle('active', mode === 'cluster');
+
+    $('tab-config').style.display = mode === 's3' ? '' : 'none';
+    $('tab-filters').style.display = mode === 's3' ? '' : 'none';
+    $('tab-notifications').style.display = mode === 's3' ? '' : 'none';
+    $('db-config-panel').style.display = mode === 'db' ? '' : 'none';
+    $('db-controls').style.display = mode === 'db' ? 'flex' : 'none';
+    $('cluster-config-panel').style.display = mode === 'cluster' ? '' : 'none';
+    $('s3-stats-row').style.display = mode === 's3' ? 'grid' : 'none';
+    $('db-stats-row').style.display = mode === 'db' ? 'grid' : 'none';
+  }
+
+  $('mode-s3').addEventListener('click', () => switchMode('s3'));
+  $('mode-db').addEventListener('click', () => switchMode('db'));
+  $('mode-cluster').addEventListener('click', () => switchMode('cluster'));
+
+  // ── DB Config helpers ──────────────────────────────────────────────────
+
+  function getDbConfig() {
+    return {
+      source: {
+        host: v('db-src-host'),
+        port: parseInt(v('db-src-port')) || 5432,
+        database: v('db-src-database'),
+        user: v('db-src-user'),
+        password: v('db-src-password'),
+      },
+      dest: {
+        host: v('db-dst-host'),
+        port: parseInt(v('db-dst-port')) || 5432,
+        database: v('db-dst-database'),
+        user: v('db-dst-user'),
+        password: v('db-dst-password'),
+      },
+      settings: {
+        sourceSchema: v('db-src-schema') || 'public',
+        destSchema: v('db-dst-schema') || 'public',
+        concurrency: parseInt(v('db-setting-concurrency')) || 5,
+        intervalSeconds: parseInt(v('db-setting-interval')) || 0,
+        includeTables: v('db-setting-include-tables').split('\n').map(s => s.trim()).filter(Boolean),
+        excludeTables: v('db-setting-exclude-tables').split('\n').map(s => s.trim()).filter(Boolean),
+      },
+    };
+  }
+
+  function applyDbConfig(cfg) {
+    if (!cfg) return;
+    const set = (id, val) => { const e = $(id); if (e && val != null) e.value = val; };
+    if (cfg.source) {
+      set('db-src-host', cfg.source.host);
+      set('db-src-port', cfg.source.port);
+      set('db-src-database', cfg.source.database);
+      set('db-src-user', cfg.source.user);
+      set('db-src-password', cfg.source.password);
+      set('db-src-schema', cfg.source.schema);
+    }
+    if (cfg.dest) {
+      set('db-dst-host', cfg.dest.host);
+      set('db-dst-port', cfg.dest.port);
+      set('db-dst-database', cfg.dest.database);
+      set('db-dst-user', cfg.dest.user);
+      set('db-dst-password', cfg.dest.password);
+      set('db-dst-schema', cfg.dest.schema);
+    }
+    if (cfg.settings) {
+      set('db-setting-concurrency', cfg.settings.concurrency);
+      set('db-setting-interval', cfg.settings.intervalSeconds);
+      set('db-setting-include-tables', (cfg.settings.includeTables || []).join('\n'));
+      set('db-setting-exclude-tables', (cfg.settings.excludeTables || []).join('\n'));
+    }
+  }
+
+  // ── DB Sync actions ──────────────────���────────────────────────────────────────
+
+  let dbRunning = false;
+  let dbStartedAt = null;
+  let dbElapsedTimer = null;
+
+  async function startDbSync(isDryRun = false) {
+    const cfg = getDbConfig();
+    if (!cfg.source.host || !cfg.source.database || !cfg.source.user || !cfg.source.password)
+      return appendLog('error', 'Source database configuration is incomplete');
+    if (!cfg.dest.host || !cfg.dest.database || !cfg.dest.user || !cfg.dest.password)
+      return appendLog('error', 'Destination database configuration is incomplete');
+
+    $('btn-db-start').disabled = true;
+    $('btn-db-dry-run').disabled = true;
+
+    if (isDryRun) cfg.settings.dryRun = true;
+
+    setDbRunning(true, isDryRun);
+    dbStartedAt = Date.now();
+    startDbElapsedTimer();
+
+    const res = await fetch('/api/db/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+
+    if (!res.ok) {
+      appendLog('error', res.error || 'Failed to start DB sync');
+      setDbRunning(false);
+      stopDbElapsedTimer();
+    }
+  }
+
+  function startDbDryRun() { startDbSync(true); }
+
+  function stopDbSync() {
+    setStatus('stopping', 'Stopping DB…');
+    $('btn-db-stop').disabled = true;
+    fetch('/api/db/stop', { method: 'POST' }).catch(() => {});
+  }
+
+  function setDbRunning(running, isDryRun = false) {
+    dbRunning = running;
+    $('btn-db-start').style.display = running ? 'none' : '';
+    $('btn-db-dry-run').style.display = running ? 'none' : '';
+    $('btn-db-stop').style.display = running ? '' : 'none';
+    $('btn-db-stop').disabled = false;
+    $('dry-run-badge').style.display = (running && isDryRun) ? '' : 'none';
+
+    if (running) {
+      setStatus(isDryRun ? 'dryrun' : 'running', isDryRun ? 'DB Dry Run' : 'DB Syncing');
+    } else {
+      setStatus('idle', 'Idle');
+    }
+  }
+
+  function updateDbStats(stats) {
+    $('db-stat-tables').textContent = stats.totalTables || 0;
+    $('db-stat-synced-tables').textContent = stats.syncedTables || 0;
+    $('db-stat-rows').textContent = formatBytes(stats.syncedRows || 0).replace(' B', '').replace(' KB', 'k').replace(' MB', 'M').replace(' GB', 'G');
+    $('db-stat-failed').textContent = stats.failedTables || 0;
+  }
+
+  function startDbElapsedTimer() {
+    $('elapsed-badge').style.display = 'flex';
+    clearInterval(dbElapsedTimer);
+    dbElapsedTimer = setInterval(() => {
+      if (dbStartedAt) $('elapsed-text').textContent = formatElapsed(Date.now() - dbStartedAt);
+    }, 1000);
+  }
+
+  function stopDbElapsedTimer() {
+    clearInterval(dbElapsedTimer);
+    dbElapsedTimer = null;
+  }
+
+  // ── DB Connection test ─────────────────────────────────────────────────
+
+  async function testDbConn(side) {
+    const cfg = side === 'source' ? getDbConfig().source : getDbConfig().dest;
+    const pfx = side === 'source' ? 'db-src' : 'db-dst';
+    const lbl = $(`${pfx}-test-label`);
+    const dot = $(`${pfx}-status-dot`);
+    lbl.textContent = '…';
+    dot.style.background = '#fbbf24';
+    const res = await fetch('/api/db/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: cfg }),
+    }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+    lbl.textContent = 'Test';
+    if (res.ok) {
+      dot.style.background = '#34d399';
+      appendLog('success', `${side} DB connected — ${cfg.host}/${cfg.database}`);
+    } else {
+      dot.style.background = '#f87171';
+      appendLog('error', `${side} DB failed — ${res.error || 'Unknown error'}`);
+    }
+  }
+
+  // ── DB Socket events ──────────���─��───────────────────────────────────────────
+
+  socket.on('db:sync:init', ({ running, failedCount }) => {
+    if (failedCount > 0) {
+      $('btn-db-retry').style.display = '';
+      $('db-retry-label').textContent = `Retry Failed (${failedCount})`;
+    }
+  });
+
+  socket.on('db:sync:started', ({ totalTables, dryRun, isRetry }) => {
+    const label = dryRun ? '[DRY RUN] Preview' : isRetry ? 'Retry' : 'DB Sync';
+    appendLog('info', `${label} started — ${totalTables} tables to sync`);
+  });
+
+  socket.on('db:sync:stats', (stats) => updateDbStats(stats));
+
+  socket.on('db:sync:table_done', ({ table, action, rows, bytes, dryRun }) => {
+    const level = dryRun ? 'info' : 'success';
+    const prefix = dryRun ? '[DRY RUN] ' : '';
+    const label = action === 'synced' ? 'Synced' : action === 'skipped' ? 'Skipped' : 'Deleted';
+    appendLog(level, `${prefix}Table ${label}: ${table}${rows > 0 ? ` (${rows} rows)` : ''}`);
+  });
+
+  socket.on('db:sync:table_error', ({ table, error }) => {
+    appendLog('error', `Failed table: ${table} — ${error}`);
+  });
+
+  socket.on('db:sync:stopped', ({ reason, stats, elapsed }) => {
+    setDbRunning(false);
+    stopDbElapsedTimer();
+    if (stats) updateDbStats(stats);
+    if ((stats?.failedTables || 0) === 0) $('btn-db-retry').style.display = 'none';
+  });
+
+  // ── DB Event wiring ────────────────────────────────────────────────────────
+
+  $('btn-db-src-test').addEventListener('click', () => testDbConn('source'));
+  $('btn-db-dst-test').addEventListener('click', () => testDbConn('dest'));
+  $('btn-db-src-secret').addEventListener('click', () => toggleSecret('db-src-password'));
+  $('btn-db-dst-secret').addEventListener('click', () => toggleSecret('db-dst-password'));
+  $('btn-db-dry-run').addEventListener('click', startDbDryRun);
+  $('btn-db-start').addEventListener('click', () => startDbSync());
+  $('btn-db-stop').addEventListener('click', stopDbSync);
+
+  // ── Cluster Management ──────────────────────────────────────────────────
+
+  function getClusterConfig() {
+    return {
+      source: {
+        host: v('cluster-src-host'),
+        port: parseInt(v('cluster-src-port')) || 5432,
+        database: v('cluster-src-database'),
+        user: v('cluster-src-user'),
+        password: v('cluster-src-password'),
+      },
+      dest: {
+        host: v('cluster-dst-host'),
+        port: parseInt(v('cluster-dst-port')) || 5432,
+        database: v('cluster-dst-database'),
+        user: v('cluster-dst-user'),
+        password: v('cluster-dst-password'),
+      },
+    };
+  }
+
+  function setClusterStatus(connected, data = null) {
+    const dot = $('cluster-status-dot');
+    dot.style.background = connected ? '#34d399' : '#334155';
+    $('cluster-primary-status').textContent = connected ? 'Connected' : 'Disconnected';
+    
+    if (data && data.replicas) {
+      $('cluster-replicas').textContent = data.replicas.replica_count || 0;
+      $('cluster-sync').textContent = data.replicas.sync_replicas || 0;
+      $('cluster-async').textContent = data.replicas.async_replicas || 0;
+    }
+  }
+
+  async function connectCluster() {
+    const cfg = getClusterConfig();
+    if (!cfg.source.host || !cfg.source.database || !cfg.source.user || !cfg.source.password)
+      return appendLog('error', 'Primary database configuration is incomplete');
+
+    appendLog('info', `Connecting to cluster: ${cfg.source.host}/${cfg.source.database}…`);
+    
+    const res = await fetch('/api/cluster/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: cfg.source }),
+    }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+
+    if (res.ok) {
+      setClusterStatus(true, res);
+      appendLog('success', `Connected to cluster: ${cfg.source.host}/${cfg.source.database}`);
+      
+      $('replica-node-1').style.opacity = '1';
+      $('replica-node-2').style.opacity = '1';
+    } else {
+      setClusterStatus(false);
+      appendLog('error', `Cluster error: ${res.error}`);
+      $('replica-node-1').style.opacity = '0.3';
+      $('replica-node-2').style.opacity = '0.3';
+    }
+  }
+
+  async function createReplica() {
+    const cfg = getClusterConfig();
+    if (!cfg.source.host || !cfg.source.database)
+      return appendLog('error', 'Source (Primary) database not connected');
+    if (!cfg.dest.host || !cfg.dest.database || !cfg.dest.user || !cfg.dest.password)
+      return appendLog('error', 'Replica configuration is incomplete');
+
+    appendLog('info', `Creating read replica on ${cfg.dest.host}…`);
+    
+    const res = await fetch('/api/cluster/create-replica', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: cfg.source, dest: cfg.dest }),
+    }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+
+    if (res.ok) {
+      appendLog('success', `Read replica created: ${cfg.dest.host}/${cfg.dest.database}`);
+      refreshClusterStatus();
+    } else {
+      appendLog('error', `Create replica error: ${res.error}`);
+    }
+  }
+
+  async function promoteReplica() {
+    appendLog('info', 'Promoting replica to primary…');
+    appendLog('warning', 'Promote action requires manual setup. Please configure replication on destination.');
+  }
+
+  async function refreshClusterStatus() {
+    const res = await fetch('/api/cluster/status').then(r => r.json()).catch(() => ({ ok: false }));
+    
+    if (res.ok) {
+      $('cluster-replicas').textContent = res.replicas?.replica_count || 0;
+      $('cluster-sync').textContent = res.replicas?.sync_replicas || 0;
+      $('cluster-async').textContent = res.replicas?.async_replicas || 0;
+      
+      const lagRes = await fetch('/api/cluster/lag').then(r => r.json()).catch(() => ({ ok: false }));
+      if (lagRes.ok) {
+        const lagMB = (lagRes.maxLag / 1024 / 1024).toFixed(2);
+        $('cluster-lag').textContent = lagMB + ' MB';
+        $('cluster-lag').style.color = lagRes.lagAlert > 100 ? '#f87171' : '#34d399';
+      }
+      
+      appendLog('info', 'Cluster status refreshed');
+    }
+  }
+
+  async function disconnectCluster() {
+    await fetch('/api/cluster/disconnect', { method: 'POST' });
+    setClusterStatus(false);
+    $('cluster-replicas').textContent = '0';
+    $('cluster-sync').textContent = '0';
+    $('cluster-async').textContent = '0';
+    $('cluster-lag').textContent = '0 MB';
+    $('replica-node-1').style.opacity = '0.3';
+    $('replica-node-2').style.opacity = '0.3';
+    appendLog('info', 'Disconnected from cluster');
+  }
+
+  $('btn-cluster-connect').addEventListener('click', connectCluster);
+  $('btn-cluster-create-replica').addEventListener('click', createReplica);
+  $('btn-cluster-promote').addEventListener('click', promoteReplica);
+  $('btn-cluster-refresh').addEventListener('click', refreshClusterStatus);
+  $('btn-cluster-disconnect').addEventListener('click', disconnectCluster);
 });

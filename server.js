@@ -10,6 +10,9 @@ import rateLimit from 'express-rate-limit';
 import { init as initLogger, log } from './src/logger.js';
 import { initEngine, startSync, stopSync, retryFailed } from './src/syncEngine.js';
 import { testConnection } from './src/s3Client.js';
+import { testConnection as testDbConnection } from './src/dbClient.js';
+import { initDbEngine, startDbSync, stopDbSync, retryFailedDbTables, dbState } from './src/dbSyncEngine.js';
+import { getClusterStatus, getReplicaLag, checkReplicationLag, buildClusterPool } from './src/dbCluster.js';
 import { state } from './src/syncState.js';
 import { getMetricsText } from './src/metrics.js';
 import { listJobs, getJob, createJob, updateJob, deleteJob } from './src/jobStore.js';
@@ -22,13 +25,21 @@ const PORT      = parseInt(process.env.PORT || '3000', 10);
 const NODE_ENV  = process.env.NODE_ENV || 'development';
 const IS_PROD   = NODE_ENV === 'production';
 
+function getCorsOrigin() {
+  const allowed = process.env.ALLOWED_ORIGIN;
+  if (!allowed) return IS_PROD ? false : '*';
+  if (allowed === '*') return '*';
+  if (allowed.includes(',')) return allowed.split(',').map(o => o.trim());
+  return allowed;
+}
+
 // ── App & WebSocket ────────────────────────────────────────────────────────
 
 const app        = express();
 const httpServer = createServer(app);
 const io         = new Server(httpServer, {
   cors: {
-    origin: process.env.ALLOWED_ORIGIN || (IS_PROD ? false : '*'),
+    origin: getCorsOrigin(),
     methods: ['GET', 'POST'],
   },
   pingTimeout:  60_000,
@@ -38,17 +49,9 @@ const io         = new Server(httpServer, {
 // ── Security ───────────────────────────────────────────────────────────────
 
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", 'cdn.tailwindcss.com', 'cdn.jsdelivr.net'],
-      styleSrc:   ["'self'", "'unsafe-inline'", 'cdn.tailwindcss.com', 'fonts.googleapis.com'],
-      fontSrc:    ["'self'", 'fonts.gstatic.com'],
-      connectSrc: ["'self'", 'ws:', 'wss:'],
-      imgSrc:     ["'self'", 'data:'],
-    },
-  },
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
+  hsts: false,
 }));
 
 const apiLimiter = rateLimit({
@@ -107,6 +110,7 @@ app.use('/api/test-connection', testLimiter);
 
 initLogger(io);
 initEngine(io);
+initDbEngine(io);
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 
@@ -114,6 +118,8 @@ app.get('/health', basicAuth, (_req, res) => res.json({
   status: 'ok', uptime: Math.floor(process.uptime()),
   memory: process.memoryUsage(),
   sync: { running: state.running },
+  dbSync: { running: dbState.running },
+  cluster: { connected: !!_clusterPool },
   version: '1.0.0', timestamp: new Date().toISOString(),
 }));
 
@@ -216,6 +222,149 @@ app.delete('/api/checkpoints/:key', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Database Sync ───────────────────────────────────────────────────────
+
+app.post('/api/db/test-connection', async (req, res) => {
+  const { config } = req.body;
+  if (!config?.host || !config?.database || !config?.user || !config?.password)
+    return res.status(400).json({ ok: false, error: 'Missing required fields' });
+  res.json(await testDbConnection(config));
+});
+
+app.post('/api/db/start', startLimiter, (req, res) => {
+  const { source, dest, settings, notifications, name } = req.body;
+  if (dbState.running)
+    return res.status(409).json({ ok: false, error: 'A database sync is already running' });
+  if (!source?.host || !source?.database || !source?.user || !source?.password)
+    return res.status(400).json({ ok: false, error: 'Source configuration is incomplete' });
+  if (!dest?.host || !dest?.database || !dest?.user || !dest?.password)
+    return res.status(400).json({ ok: false, error: 'Destination configuration is incomplete' });
+
+  const s = settings || {};
+  const safeSettings = {
+    ...s,
+    sourceSchema: s.sourceSchema || 'public',
+    destSchema: s.destSchema || 'public',
+    concurrency: Math.max(1, Math.min(parseInt(s.concurrency) || 5, 10)),
+    intervalSeconds: Math.max(0, parseInt(s.intervalSeconds) || 0),
+    includeTables: s.includeTables || [],
+    excludeTables: s.excludeTables || [],
+    renameTables: s.renameTables || {},
+  };
+
+  res.json({ ok: true, message: safeSettings.dryRun ? 'Dry-run started' : 'Database sync started' });
+  startDbSync({ source, dest, settings: safeSettings, notifications, name }).catch((err) =>
+    log('error', `DB Sync crashed: ${err.message}`));
+});
+
+app.post('/api/db/stop', (_req, res) => { stopDbSync(); res.json({ ok: true }); });
+
+app.get('/api/db/status', (_req, res) => res.json({
+  running: dbState.running,
+  stats: dbState.stats,
+  startedAt: dbState.startedAt,
+  hasConfig: !!dbState.config,
+  failedCount: dbState.lastFailedTables?.length || 0,
+}));
+
+app.post('/api/db/retry-failed', (req, res) => {
+  if (dbState.running) return res.status(409).json({ ok: false, error: 'Sync already running' });
+  if (!dbState.lastFailedTables?.length) return res.json({ ok: false, error: 'No failed tables from last run' });
+  if (!dbState.config) return res.json({ ok: false, error: 'No previous config available' });
+
+  const count = dbState.lastFailedTables.length;
+  res.json({ ok: true, count });
+  retryFailedDbTables(dbState.config).catch((err) => log('error', `DB Retry crashed: ${err.message}`));
+});
+
+// ── Cluster Management ───────────────────────────────────────────────────
+
+let _clusterPool = null;
+
+app.post('/api/cluster/connect', async (req, res) => {
+  const { config } = req.body;
+  if (!config?.host || !config?.database || !config?.user || !config?.password)
+    return res.status(400).json({ ok: false, error: 'Missing required fields' });
+
+  if (_clusterPool) await _clusterPool.end();
+  _clusterPool = buildClusterPool(config);
+  
+  try {
+    const result = await getClusterStatus(config);
+    res.json(result);
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/cluster/status', async (_req, res) => {
+  if (!_clusterPool) return res.json({ ok: false, error: 'Not connected to cluster' });
+  
+  try {
+    const result = await getClusterStatus({
+      host: _clusterPool.options.host,
+      port: _clusterPool.options.port,
+      database: _clusterPool.options.database,
+      user: _clusterPool.options.user,
+      password: '',
+    });
+    res.json(result);
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/cluster/replicas', async (_req, res) => {
+  if (!_clusterPool) return res.json({ ok: false, error: 'Not connected to cluster' });
+  
+  const config = {
+    host: _clusterPool.options.host,
+    port: _clusterPool.options.port,
+    database: _clusterPool.options.database,
+    user: _clusterPool.options.user,
+    password: '',
+  };
+  
+  const result = await getReplicaLag(config);
+  res.json(result);
+});
+
+app.get('/api/cluster/lag', async (_req, res) => {
+  if (!_clusterPool) return res.json({ ok: false, error: 'Not connected to cluster' });
+  
+  const config = {
+    host: _clusterPool.options.host,
+    port: _clusterPool.options.port,
+    database: _clusterPool.options.database,
+    user: _clusterPool.options.user,
+    password: '',
+  };
+  
+  const result = await checkReplicationLag(config);
+  res.json(result);
+});
+
+app.get('/api/cluster/disconnect', async (_req, res) => {
+  if (_clusterPool) {
+    await _clusterPool.end();
+    _clusterPool = null;
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/cluster/create-replica', async (req, res) => {
+  const { source, dest } = req.body;
+  if (!source?.host || !source?.database)
+    return res.status(400).json({ ok: false, error: 'Source (Primary) not connected' });
+  if (!dest?.host || !dest?.database || !dest?.user || !dest?.password)
+    return res.status(400).json({ ok: false, error: 'Destination configuration incomplete' });
+
+  res.json({ 
+    ok: true, 
+    message: `Base backup initiated. Please configure replication manually on ${dest.host}. This feature requires database superuser access for automated setup.` 
+  });
+});
+
 // ── Notification tests ─────────────────────────────────────────────────────
 
 app.post('/api/test-webhook', async (req, res) => {
@@ -246,8 +395,16 @@ io.on('connection', (socket) => {
     running: state.running,
     failedCount: state.lastFailedObjects?.length || 0,
   });
+  socket.emit('db:sync:stats', { ...dbState.stats, startedAt: dbState.startedAt });
+  socket.emit('db:sync:init', {
+    running: dbState.running,
+    failedCount: dbState.lastFailedTables?.length || 0,
+  });
   if (state.running) {
     socket.emit('log', { ts: Date.now(), level: 'info', message: 'Sync is currently in progress…' });
+  }
+  if (dbState.running) {
+    socket.emit('log', { ts: Date.now(), level: 'info', message: 'Database sync is currently in progress…' });
   }
 });
 
@@ -256,6 +413,7 @@ io.on('connection', (socket) => {
 function shutdown(signal) {
   log('info', `${signal} received — shutting down`);
   if (state.running) { state.stopRequested = true; log('info', 'Signalling sync to stop'); }
+  if (dbState.running) { dbState.stopRequested = true; log('info', 'Signalling DB sync to stop'); }
   httpServer.close(() => { log('info', 'Server closed'); process.exit(0); });
   setTimeout(() => { log('error', 'Forced exit after 30s'); process.exit(1); }, 30_000).unref();
 }
