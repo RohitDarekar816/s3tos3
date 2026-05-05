@@ -8,8 +8,6 @@ export function buildDbClient(config) {
     database: config.database,
     user: config.user,
     password: config.password,
-    max: config.maxConnections || 10,
-    idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
   });
   return client;
@@ -53,9 +51,8 @@ export async function getTables(pool, schema = 'public') {
 
 export async function getTableCount(pool, tableName, schema = 'public') {
   try {
-    const quotedTable = `"${tableName}"`;
     const result = await pool.query(
-      `SELECT COUNT(*) as count FROM ${schema}.${quotedTable}`
+      `SELECT COUNT(*) as count FROM "${schema}"."${tableName}"`
     );
     return parseInt(result.rows[0].count);
   } catch (err) {
@@ -75,27 +72,22 @@ export async function getTableSchema(pool, tableName, schema = 'public') {
 
 export async function getTableSize(pool, tableName, schema = 'public') {
   try {
-    const quotedTable = `"${tableName}"`;
-    const result = await pool.query(`
-      SELECT pg_total_relation_size($1) as size
-    `, [schema + '.' + quotedTable]);
+    const result = await pool.query(
+      `SELECT pg_total_relation_size($1) as size`,
+      [`"${schema}"."${tableName}"`]
+    );
     return parseInt(result.rows[0].size) || 0;
   } catch {
     return 0;
   }
 }
 
+// Dump all rows from a table. Returns null if the table doesn't exist or is
+// inaccessible, and an empty array [] if the table exists but has no rows.
 export async function dumpTable(pool, tableName, schema = 'public') {
-  const quotedTable = `"${tableName}"`;
-  const query = `SELECT * FROM ${schema}.${quotedTable} LIMIT 1`;
   try {
-    const result = await pool.query(query);
-    if (result.rows.length === 0) {
-      return [];
-    }
-    const fullQuery = `SELECT * FROM ${schema}.${quotedTable}`;
-    const fullResult = await pool.query(fullQuery);
-    return fullResult.rows;
+    const result = await pool.query(`SELECT * FROM "${schema}"."${tableName}"`);
+    return result.rows;
   } catch (err) {
     return null;
   }
@@ -103,33 +95,38 @@ export async function dumpTable(pool, tableName, schema = 'public') {
 
 export async function restoreTable(pool, tableName, schema, rows) {
   if (!rows.length) return { ok: true, restored: 0 };
-  
+
+  const quotedSchema = `"${schema}"`;
+  const quotedTable  = `"${tableName}"`;
+
+  // Auto-create the destination table as all-TEXT if it doesn't exist yet.
   const tableExistsCheck = await pool.query(`
     SELECT EXISTS (
-      SELECT FROM information_schema.tables 
+      SELECT FROM information_schema.tables
       WHERE table_schema = $1 AND table_name = $2
     ) as exists
   `, [schema, tableName]);
-  
+
   if (!tableExistsCheck.rows[0].exists) {
     const columns = Object.keys(rows[0]);
     const colDefs = columns.map(c => `"${c}" TEXT`).join(', ');
-    const quotedTable = `"${tableName}"`;
-    await pool.query(`CREATE TABLE IF NOT EXISTS ${schema}.${quotedTable} (${colDefs})`);
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS ${quotedSchema}.${quotedTable} (${colDefs})`
+    );
   }
-  
-  const columns = Object.keys(rows[0]);
-  const colNames = columns.map(c => `"${c}"`).join(', ');
+
+  const columns      = Object.keys(rows[0]);
+  const colNames     = columns.map(c => `"${c}"`).join(', ');
+  // Placeholders must be $1, $2, … — bare integers are not valid pg syntax.
   const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
-  const values = rows.map(row => columns.map(c => row[c]));
-  const quotedTable = `"${tableName}"`;
-  
+  const values       = rows.map(row => columns.map(c => row[c]));
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     for (const vals of values) {
       await client.query(
-        `INSERT INTO ${schema}.${quotedTable} (${colNames}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+        `INSERT INTO ${quotedSchema}.${quotedTable} (${colNames}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
         vals
       );
     }
@@ -145,7 +142,7 @@ export async function restoreTable(pool, tableName, schema, rows) {
 
 export async function copyTable(pool, srcTable, dstPool, dstTable, dstSchema) {
   const rows = await dumpTable(pool, srcTable);
-  if (!rows.length) return { ok: true, copied: 0 };
+  if (!rows || !rows.length) return { ok: true, copied: 0 };
   return restoreTable(dstPool, dstTable, dstSchema, rows);
 }
 

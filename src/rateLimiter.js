@@ -45,6 +45,14 @@ export function setLimit(mbps) {
   maxBps = mbps > 0 ? mbps * 1024 * 1024 : 0;
   tokens = maxBps;
   lastRefill = Date.now();
+
+  // If the limit is being disabled, immediately resolve all queued consumers
+  // so in-flight transfers aren't left hanging forever.
+  if (maxBps <= 0) {
+    while (queue.length > 0) {
+      queue.shift().resolve();
+    }
+  }
 }
 
 export function getLimit() { return maxBps; }

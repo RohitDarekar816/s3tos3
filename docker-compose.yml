@@ -1,29 +1,65 @@
 services:
   s3backup:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: s3-backup-studio:latest
     container_name: s3-backup-studio
     restart: unless-stopped
+
+    # Load all env vars from .env file (copy .env.example → .env and fill in values)
+    env_file: .env
+
+    # Explicit env overrides (these take precedence over .env)
+    environment:
+      NODE_ENV: production
+
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
-    environment:
-      PORT:             ${PORT:-3000}
-      NODE_ENV:         ${NODE_ENV}
-      AUTH_USER:        ${AUTH_USER}
-      AUTH_PASSWORD:    ${AUTH_PASSWORD}
-      ALLOWED_ORIGIN:   ${ALLOWED_ORIGIN:-}
+
     volumes:
-      # Persist jobs, history, and checkpoints across container restarts
+      # Persist backup catalog, job configs, sync history, and checkpoints
       - s3backup-data:/app/data
-      # Persist log files
+      # Persist application and PM2 log files
       - s3backup-logs:/app/logs
+      - s3backup-databases:/app/dbbackup
+
+    # Resource limits — tune to your host
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+    # Structured JSON logging for log aggregators (Loki, CloudWatch, etc.)
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:${PORT:-3000}/ping"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
+
+    # Isolate on a private network; expose only the mapped port to the host
+    networks:
+      - s3backup-net
+
+networks:
+  s3backup-net:
+    driver: bridge
 
 volumes:
   s3backup-data:
+    driver: local
   s3backup-logs:
+    driver: local
+  s3backup-databases:
+    driver: local

@@ -232,6 +232,9 @@ export async function retryFailedDbTables(config) {
   dbState.running = true;
   dbState.config = config;
   resetDbStats();
+  // resetDbStats() does not clear stopRequested — explicitly reset it so a
+  // retry after a user-stopped run actually processes tables.
+  dbState.stopRequested = false;
   dbState.stats.totalTables = dbState.lastFailedTables.length;
 
   const srcPool = buildDbPool(config.source);
@@ -242,10 +245,13 @@ export async function retryFailedDbTables(config) {
   log('info', `Retrying ${dbState.lastFailedTables.length} failed tables`);
 
   await runWorkerPool(dbState.lastFailedTables, concurrency, async ({ table }) => {
-    await syncTable(srcPool, dstPool, table, table, config.settings?.destSchema || 'public', config.settings);
+    await syncTable(srcPool, dstPool, table, table, config.settings?.destSchema || 'public', config.settings || {});
   });
 
   clearInterval(statsInterval);
+  // Always close pools — previously they were leaked on every retry call.
+  await closePool(srcPool).catch(() => {});
+  await closePool(dstPool).catch(() => {});
   emitDbStats();
   dbState.running = false;
 

@@ -1,9 +1,32 @@
+# Dependencies (installed inside the image)
 node_modules/
+
+# Local secrets — never bake into the image
 .env
-logs/
+
+# Runtime-generated data (mounted as volumes)
 data/
-*.log
+logs/
+
+# Test artifacts
+tests/
+coverage/
+*.test.js
+
+# Dev tooling
+ecosystem.config.cjs
+.kiro/
+
+# Version control
 .git/
 .gitignore
-ecosystem.config.cjs
+.gitattributes
+
+# Docs
 README*
+*.md
+
+# OS noise
+.DS_Store
+Thumbs.db
+*.log

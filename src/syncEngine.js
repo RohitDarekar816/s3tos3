@@ -158,7 +158,11 @@ async function runOnce(config) {
   const dstClient = buildS3Client(dest);
 
   // ── Checkpoint: check for a resumable previous run ──────────────────────
-  const cpKey = makeKey(source.bucket, dest.bucket);
+  // Include prefixes in the key so different prefix pairs don't share a checkpoint.
+  const cpKey = makeKey(
+    `${source.bucket}/${source.prefix || ''}`,
+    `${dest.bucket}/${dest.prefix || ''}`,
+  );
   state.currentCheckpointKey = cpKey;
   const checkpoint = loadCheckpoint(cpKey);
   if (checkpoint) {
@@ -239,15 +243,18 @@ async function runOnce(config) {
 
   // ── Phase 3: Copy files (or simulate if dry-run) ────────────────────────
   await runWorkerPool(toCopy, concurrency, async (obj) => {
+    const beforeFailed = state.stats.failed;
     await copyFile(srcClient, dstClient, source, dest, obj, settings, isDryRun);
 
-    // Save checkpoint every 100 processed files
-    if (!isDryRun && ++checkpointDirty >= 100) {
+    // Only checkpoint files that actually succeeded — failed files must be
+    // retried on resume, not silently skipped.
+    const succeeded = state.stats.failed === beforeFailed;
+    if (!isDryRun && succeeded) {
       completedKeys.add(obj.Key);
-      saveCheckpoint(cpKey, completedKeys);
-      checkpointDirty = 0;
-    } else {
-      completedKeys.add(obj.Key);
+      if (++checkpointDirty >= 100) {
+        saveCheckpoint(cpKey, completedKeys);
+        checkpointDirty = 0;
+      }
     }
   });
 
@@ -347,6 +354,9 @@ export async function retryFailed(config, failedObjects) {
   state.running = true;
   state.config = config;
   resetStats();
+  // resetStats() clears lastFailedObjects and startedAt but not stopRequested —
+  // explicitly clear it so a retry after a user-stopped run actually runs.
+  state.stopRequested = false;
   state.stats.total = failedObjects.length;
   state.stats.bytesTotal = failedObjects.reduce((s, o) => s + (o.Size || 0), 0);
 

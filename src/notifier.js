@@ -9,16 +9,80 @@ function formatBytes(bytes) {
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 
+/**
+ * Build a webhook payload that works across all major platforms.
+ * - Google Chat: requires { "text": "..." }
+ * - Slack:       requires { "text": "..." }
+ * - Discord:     requires { "content": "..." }
+ * - Generic:     full JSON object
+ */
+function buildWebhookPayload(event, data) {
+  let text;
+
+  if (event === 'backup_completed') {
+    text = `✅ *Backup completed* — ${data.jobName || data.backupId}\n` +
+           `Database: ${data.source}\n` +
+           `Size: ${formatBytes(data.sizeBytes || 0)} in ${data.elapsed || 0}s\n` +
+           `Storage: ${(data.storagePaths || []).map(p => p.path).join(', ') || '—'}`;
+  } else if (event === 'backup_failed') {
+    text = `❌ *Backup failed* — ${data.jobName || data.backupId}\n` +
+           `Database: ${data.source}\n` +
+           `Error: ${data.errorMessage || 'Unknown error'}`;
+  } else if (event === 'backup_corrupted') {
+    text = `⚠️ *Backup corrupted* — ${data.backupId}\n` +
+           `Error: ${data.errorMessage || 'Checksum mismatch'}`;
+  } else if (event === 'backup_test') {
+    text = `🔔 *S3 Backup Studio — test notification*\n` +
+           `Sent at: ${data.timestamp || new Date().toISOString()}`;
+  } else {
+    // S3 sync events
+    const statusIcon = data.reason === 'completed' ? '✅' : '❌';
+    const statusLabel = data.reason === 'completed' ? 'Completed' : data.reason === 'user_stopped' ? 'Stopped' : 'Failed';
+    text = `${statusIcon} *S3 Sync ${statusLabel}*\n` +
+           `Source: ${data.source}\nDest: ${data.dest}\n` +
+           `${data.stats?.synced || 0} synced, ${data.stats?.failed || 0} failed — ${formatBytes(data.stats?.bytesTransferred || 0)}`;
+  }
+
+  return {
+    // Google Chat & Slack
+    text,
+    // Discord
+    content: text,
+    // Full structured payload for generic webhooks
+    event,
+    ...data,
+  };
+}
+
 export async function sendWebhook(url, payload) {
   if (!url) return;
   try {
+    // If payload already has a text field (e.g. from test route), use as-is
+    // Otherwise build a platform-compatible payload
+    const body = payload.text
+      ? payload
+      : buildWebhookPayload(payload.event || 'generic', payload);
+
+    // Google Chat is strict — it only accepts { "text": "..." } and rejects extra fields.
+    // Detect Google Chat URLs and send a minimal payload.
+    const isGoogleChat = url.includes('chat.googleapis.com');
+    const finalBody = isGoogleChat ? { text: body.text } : body;
+
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'S3BackupStudio/1.0' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(finalBody),
       signal: AbortSignal.timeout(10_000),
     });
-    return { ok: res.ok, status: res.status };
+
+    // Read response body for error details (helps debug Google Chat / Slack rejections)
+    let responseBody = '';
+    try { responseBody = await res.text(); } catch {}
+
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: `HTTP ${res.status}: ${responseBody.slice(0, 200)}` };
+    }
+    return { ok: true, status: res.status };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -130,7 +194,7 @@ export async function notify(notifications, payload) {
     const wh = notifications.webhook;
     if ((isFailure && wh.onFailure) || (!isFailure && wh.onComplete)) {
       tasks.push(
-        sendWebhook(wh.url, { ...payload, event: `sync_${payload.reason}` })
+        sendWebhook(wh.url, payload)
           .catch(() => {}),
       );
     }

@@ -7,7 +7,7 @@ import path from 'path';
 import crypto from 'crypto';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { init as initLogger, log } from './src/logger.js';
+import { init as initLogger, log, isDebugEnabled } from './src/logger.js';
 import { initEngine, startSync, stopSync, retryFailed } from './src/syncEngine.js';
 import { testConnection } from './src/s3Client.js';
 import { testConnection as testDbConnection } from './src/dbClient.js';
@@ -16,9 +16,15 @@ import { getClusterStatus, getReplicaLag, checkReplicationLag, buildClusterPool 
 import { state } from './src/syncState.js';
 import { getMetricsText } from './src/metrics.js';
 import { listJobs, getJob, createJob, updateJob, deleteJob } from './src/jobStore.js';
+import { initJobManager, addJob, getActiveJobs, updateJobProgress, removeJob, pauseJob, resumeJob, stopJob } from './src/jobRunner.js';
 import { getHistory, clearHistory } from './src/history.js';
 import { listCheckpoints, removeCheckpoint } from './src/checkpoint.js';
 import { sendWebhook, sendEmail } from './src/notifier.js';
+import { initBackupEngine, startBackup, startRestore, verifyBackup, applyRetention, rotateKey, validateFormat, validateCompressionLevel } from './src/backupEngine.js';
+import { listBackupJobs, getBackupJob, createBackupJob, updateBackupJob, deleteBackupJob } from './src/backupJobStore.js';
+import { listCatalog, getCatalogRecord, updateCatalogRecord } from './src/backupCatalog.js';
+import { initScheduler, scheduleJob, unscheduleJob, rescheduleJob } from './src/backupScheduler.js';
+import { deleteFromTarget } from './src/backupStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = parseInt(process.env.PORT || '3000', 10);
@@ -111,6 +117,27 @@ app.use('/api/test-connection', testLimiter);
 initLogger(io);
 initEngine(io);
 initDbEngine(io);
+initJobManager(io);
+initScheduler(io);
+
+// ── Debug HTTP request logging ─────────────────────────────────────────────
+// Only active when LOG_LEVEL=debug — logs every request with method, path,
+// status code, and response time.
+app.use((req, res, next) => {
+  if (!isDebugEnabled()) return next();
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const color = res.statusCode >= 500 ? 'error'
+                : res.statusCode >= 400 ? 'warning'
+                : 'debug';
+    log(color, `HTTP ${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`);
+  });
+  next();
+});
+
+// Declared here so /health and cluster routes can reference it safely.
+let _clusterPool = null;
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 
@@ -183,7 +210,7 @@ app.post('/api/retry-failed', (req, res) => {
   retryFailed(state.config, objects).catch((err) => log('error', `Retry crashed: ${err.message}`));
 });
 
-// ── Named jobs ─────────────────────────────────────────────────────────────
+// ── Named jobs (persisted to disk) ─────────────────────────────────────────
 
 app.get('/api/jobs',         (_req, res) => res.json(listJobs()));
 app.get('/api/jobs/:id',     (req, res)  => {
@@ -213,6 +240,51 @@ app.post('/api/jobs/:id/start', (req, res) => {
 
 app.get('/api/history',    (_req, res) => res.json(getHistory()));
 app.delete('/api/history', (_req, res) => { clearHistory(); res.json({ ok: true }); });
+
+// ── Active job control (in-memory runner) ─────────────────────────────────
+
+// NOTE: POST /api/jobs/start must be registered BEFORE POST /api/jobs/:id/start
+// so Express doesn't match the literal string "start" as a job :id.
+app.post('/api/jobs/start', startLimiter, (req, res) => {
+  const { name, type, source, dest, settings, schedule } = req.body;
+
+  if (!name || !type) return res.status(400).json({ ok: false, error: 'Name and type required' });
+  if (!source) return res.status(400).json({ ok: false, error: 'Source configuration required' });
+  if (!dest && type !== 'status') return res.status(400).json({ ok: false, error: 'Destination configuration required' });
+
+  const jobId = 'job_' + Date.now();
+  const job = { id: jobId, name, type, source, dest, settings, schedule, status: 'pending' };
+
+  addJob(job);
+  res.json({ ok: true, jobId });
+
+  if (type === 's3') {
+    startSync({ ...job, id: jobId }).catch(err => log('error', `Job ${jobId} error: ${err.message}`));
+  } else if (type === 'db') {
+    startDbSync({ ...job, id: jobId }).catch(err => log('error', `Job ${jobId} error: ${err.message}`));
+  }
+});
+
+app.get('/api/jobs/active', (_req, res) => res.json(getActiveJobs()));
+
+app.post('/api/jobs/:id/pause', (req, res) => {
+  const job = pauseJob(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+  res.json({ ok: true });
+});
+
+app.post('/api/jobs/:id/resume', (req, res) => {
+  const job = resumeJob(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+  res.json({ ok: true });
+});
+
+app.post('/api/jobs/:id/stop', (req, res) => {
+  const job = stopJob(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+  removeJob(req.params.id);
+  res.json({ ok: true });
+});
 
 // ── Checkpoints ────────────────────────────────────────────────────────────
 
@@ -279,16 +351,16 @@ app.post('/api/db/retry-failed', (req, res) => {
 
 // ── Cluster Management ───────────────────────────────────────────────────
 
-let _clusterPool = null;
-
 app.post('/api/cluster/connect', async (req, res) => {
   const { config } = req.body;
   if (!config?.host || !config?.database || !config?.user || !config?.password)
     return res.status(400).json({ ok: false, error: 'Missing required fields' });
 
-  if (_clusterPool) await _clusterPool.end();
+  if (_clusterPool) await _clusterPool.end().catch(() => {});
   _clusterPool = buildClusterPool(config);
-  
+  // Stash the full config (including password) so subsequent routes can reuse it.
+  _clusterPool._config = config;
+
   try {
     const result = await getClusterStatus(config);
     res.json(result);
@@ -299,15 +371,8 @@ app.post('/api/cluster/connect', async (req, res) => {
 
 app.get('/api/cluster/status', async (_req, res) => {
   if (!_clusterPool) return res.json({ ok: false, error: 'Not connected to cluster' });
-  
   try {
-    const result = await getClusterStatus({
-      host: _clusterPool.options.host,
-      port: _clusterPool.options.port,
-      database: _clusterPool.options.database,
-      user: _clusterPool.options.user,
-      password: '',
-    });
+    const result = await getClusterStatus(_clusterPool._config);
     res.json(result);
   } catch (err) {
     res.json({ ok: false, error: err.message });
@@ -316,37 +381,19 @@ app.get('/api/cluster/status', async (_req, res) => {
 
 app.get('/api/cluster/replicas', async (_req, res) => {
   if (!_clusterPool) return res.json({ ok: false, error: 'Not connected to cluster' });
-  
-  const config = {
-    host: _clusterPool.options.host,
-    port: _clusterPool.options.port,
-    database: _clusterPool.options.database,
-    user: _clusterPool.options.user,
-    password: '',
-  };
-  
-  const result = await getReplicaLag(config);
+  const result = await getReplicaLag(_clusterPool._config);
   res.json(result);
 });
 
 app.get('/api/cluster/lag', async (_req, res) => {
   if (!_clusterPool) return res.json({ ok: false, error: 'Not connected to cluster' });
-  
-  const config = {
-    host: _clusterPool.options.host,
-    port: _clusterPool.options.port,
-    database: _clusterPool.options.database,
-    user: _clusterPool.options.user,
-    password: '',
-  };
-  
-  const result = await checkReplicationLag(config);
+  const result = await checkReplicationLag(_clusterPool._config);
   res.json(result);
 });
 
 app.get('/api/cluster/disconnect', async (_req, res) => {
   if (_clusterPool) {
-    await _clusterPool.end();
+    await _clusterPool.end().catch(() => {});
     _clusterPool = null;
   }
   res.json({ ok: true });
@@ -363,6 +410,263 @@ app.post('/api/cluster/create-replica', async (req, res) => {
     ok: true, 
     message: `Base backup initiated. Please configure replication manually on ${dest.host}. This feature requires database superuser access for automated setup.` 
   });
+});
+
+// ── Backup Job CRUD (Task 10.2) ────────────────────────────────────────────
+
+app.get('/api/backup/jobs', apiLimiter, (_req, res) => {
+  res.json(listBackupJobs());
+});
+
+app.post('/api/backup/jobs', apiLimiter, async (req, res) => {
+  const data = req.body;
+  const requiredFields = [
+    ['source.host',     data.source?.host],
+    ['source.database', data.source?.database],
+    ['source.user',     data.source?.user],
+    ['source.password', data.source?.password],
+    ['storageTargets',  data.storageTargets],
+  ];
+  for (const [field, value] of requiredFields) {
+    if (!value || (Array.isArray(value) && value.length === 0)) {
+      return res.status(400).json({ ok: false, error: `Missing required field: ${field}` });
+    }
+  }
+  try {
+    const job = createBackupJob(data);
+    if (job.schedule != null) {
+      scheduleJob(job);
+    }
+    res.status(201).json(job);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/backup/jobs/:id', apiLimiter, (req, res) => {
+  const job = getBackupJob(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, error: 'Backup job not found' });
+  res.json(job);
+});
+
+app.put('/api/backup/jobs/:id', apiLimiter, (req, res) => {
+  const existing = getBackupJob(req.params.id);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Backup job not found' });
+  const updated = updateBackupJob(req.params.id, req.body);
+  if (!updated) return res.status(404).json({ ok: false, error: 'Backup job not found' });
+  // Reschedule if schedule changed
+  if (req.body.schedule !== undefined) {
+    rescheduleJob(updated);
+  }
+  res.json(updated);
+});
+
+app.delete('/api/backup/jobs/:id', apiLimiter, (req, res) => {
+  const job = getBackupJob(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, error: 'Backup job not found' });
+  unscheduleJob(req.params.id);
+  deleteBackupJob(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Backup Operations (Task 10.3) ──────────────────────────────────────────
+
+app.post('/api/backup/run', apiLimiter, startLimiter, async (req, res) => {
+  const jobConfig = req.body;
+
+  // Validate format if provided
+  if (jobConfig.format) {
+    const fmtResult = validateFormat(jobConfig.format);
+    if (!fmtResult.valid) {
+      return res.status(400).json({ ok: false, error: fmtResult.error });
+    }
+  }
+
+  // Validate compression level if gzip
+  if (jobConfig.compression?.type === 'gzip' && jobConfig.compression?.level != null) {
+    const lvlResult = validateCompressionLevel(jobConfig.compression.level);
+    if (!lvlResult.valid) {
+      return res.status(400).json({ ok: false, error: lvlResult.error });
+    }
+  }
+
+  try {
+    const result = await startBackup(jobConfig);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/backup/restore', apiLimiter, startLimiter, async (req, res) => {
+  const { backupId, target, restoreOptions, passphrase } = req.body;
+
+  if (!backupId) return res.status(400).json({ ok: false, error: 'Missing required field: backupId' });
+  if (!target)   return res.status(400).json({ ok: false, error: 'Missing required field: target' });
+
+  // Check if backup is encrypted and require passphrase
+  const record = getCatalogRecord(backupId);
+  if (!record) return res.status(404).json({ ok: false, error: 'Backup record not found' });
+  if (record.encrypted && !passphrase) {
+    return res.status(400).json({ ok: false, error: 'passphrase is required for encrypted backups' });
+  }
+
+  try {
+    const result = await startRestore(backupId, target, restoreOptions || {}, passphrase || null);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/backup/verify/:backupId', apiLimiter, async (req, res) => {
+  try {
+    const result = await verifyBackup(req.params.backupId);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/backup/verify/:backupId', apiLimiter, (req, res) => {
+  const record = getCatalogRecord(req.params.backupId);
+  if (!record) return res.status(404).json({ ok: false, error: 'Backup record not found' });
+  res.json({
+    backupId: record.backupId,
+    status: record.status,
+    lastVerifiedAt: record.lastVerifiedAt || null,
+    errorMessage: record.errorMessage || null,
+  });
+});
+
+app.post('/api/backup/jobs/:id/apply-retention', apiLimiter, async (req, res) => {
+  try {
+    const result = await applyRetention(req.params.id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/backup/jobs/:id/rotate-key', apiLimiter, async (req, res) => {
+  const { currentPassphrase, newPassphrase } = req.body;
+  if (!currentPassphrase) return res.status(400).json({ ok: false, error: 'Missing required field: currentPassphrase' });
+  if (!newPassphrase)     return res.status(400).json({ ok: false, error: 'Missing required field: newPassphrase' });
+  try {
+    const result = await rotateKey(req.params.id, currentPassphrase, newPassphrase);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/backup/test-webhook', apiLimiter, async (req, res) => {
+  const { url } = req.body;
+  if (!url?.trim()) return res.status(400).json({ ok: false, error: 'Webhook URL required' });
+
+  const timestamp = new Date().toLocaleString();
+  // Build a payload with `text` so Google Chat, Slack, and Discord all accept it
+  const payload = {
+    text: `🔔 *S3 Backup Studio — test notification*\nSent at: ${timestamp}`,
+    content: `🔔 S3 Backup Studio — test notification\nSent at: ${timestamp}`,
+    event: 'backup_test',
+    message: 'S3 Backup Studio — backup notification test',
+    timestamp: new Date().toISOString(),
+  };
+
+  const result = await sendWebhook(url.trim(), payload);
+  if (!result?.ok) {
+    log('warning', `Test webhook failed for ${url.trim()} — ${result?.error || `HTTP ${result?.status}`}`);
+  }
+  res.json(result?.ok
+    ? { ok: true, status: result.status }
+    : { ok: false, error: result?.error || `Webhook returned HTTP ${result?.status}` });
+});
+
+app.post('/api/backup/test-notification', apiLimiter, async (req, res) => {
+  const { jobId, notifications } = req.body;
+
+  // Resolve notification config: use provided directly or load from job
+  let notifConfig = notifications;
+  if (!notifConfig && jobId) {
+    const job = getBackupJob(jobId);
+    if (!job) return res.status(404).json({ ok: false, error: 'Backup job not found' });
+    notifConfig = job.notifications;
+  }
+  if (!notifConfig) return res.status(400).json({ ok: false, error: 'No notification configuration provided' });
+
+  const webhookUrl = notifConfig.webhook?.url?.trim();
+  const emailHost  = notifConfig.email?.host?.trim();
+  const emailTo    = notifConfig.email?.to?.trim();
+
+  if (!webhookUrl && !emailHost) {
+    return res.status(400).json({ ok: false, error: 'No webhook URL or email host configured' });
+  }
+
+  const results = {};
+  let anyOk = false;
+
+  if (webhookUrl) {
+    results.webhook = await sendWebhook(webhookUrl, {
+      event: 'backup_test',
+      message: 'S3 Backup Studio — backup notification test',
+      timestamp: new Date().toISOString(),
+    });
+    if (results.webhook?.ok) anyOk = true;
+  }
+
+  if (emailHost && emailTo) {
+    results.email = await sendEmail(notifConfig.email, {
+      reason: 'completed',
+      source: 'backup-test',
+      dest: 'backup-test',
+      stats: { synced: 0, skipped: 0, failed: 0, bytesTransferred: 0 },
+      elapsed: '0',
+      dryRun: false,
+    });
+    if (results.email?.ok) anyOk = true;
+  }
+
+  // Return the actual outcome — ok only if at least one channel succeeded
+  const webhookErr = results.webhook && !results.webhook.ok ? results.webhook.error : null;
+  const emailErr   = results.email   && !results.email.ok   ? results.email.error   : null;
+  const errorMsg   = [webhookErr, emailErr].filter(Boolean).join('; ');
+
+  res.json({ ok: anyOk, results, error: errorMsg || undefined });
+});
+
+// ── Backup Catalog (Task 10.4) ─────────────────────────────────────────────
+
+app.get('/api/backup/catalog', apiLimiter, (_req, res) => {
+  res.json(listCatalog());
+});
+
+app.get('/api/backup/catalog/:backupId', apiLimiter, (req, res) => {
+  const record = getCatalogRecord(req.params.backupId);
+  if (!record) return res.status(404).json({ ok: false, error: 'Backup record not found' });
+  res.json(record);
+});
+
+app.delete('/api/backup/catalog/:backupId', apiLimiter, async (req, res) => {
+  const record = getCatalogRecord(req.params.backupId);
+  if (!record) return res.status(404).json({ ok: false, error: 'Backup record not found' });
+
+  const storagePaths = (record.storagePaths || []).filter((p) => p.status === 'ok');
+  const deleteResults = await Promise.all(
+    storagePaths.map((p) => deleteFromTarget(p.path))
+  );
+
+  const anyFailed = deleteResults.some((r) => !r.ok);
+  const newStatus = anyFailed ? 'delete_failed' : 'deleted';
+
+  updateCatalogRecord(req.params.backupId, { status: newStatus });
+
+  if (anyFailed) {
+    const errors = deleteResults.filter((r) => !r.ok).map((r) => r.error);
+    return res.status(500).json({ ok: false, error: `Some deletions failed: ${errors.join('; ')}`, status: newStatus });
+  }
+
+  res.json({ ok: true, status: newStatus });
 });
 
 // ── Notification tests ─────────────────────────────────────────────────────
@@ -400,6 +704,7 @@ io.on('connection', (socket) => {
     running: dbState.running,
     failedCount: dbState.lastFailedTables?.length || 0,
   });
+  socket.emit('jobs:update', { jobs: getActiveJobs() });
   if (state.running) {
     socket.emit('log', { ts: Date.now(), level: 'info', message: 'Sync is currently in progress…' });
   }

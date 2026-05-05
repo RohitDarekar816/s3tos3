@@ -1,0 +1,112 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Null Element Event Listener Crash
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists
+  - **Scoped PBT Approach**: For this deterministic bug, scope the property to the concrete failing cases: attempting to attach event listeners to `btn-history-refresh` and `btn-history-clear` which don't exist in the DOM
+  - Test implementation details from Bug Condition in design:
+    - Load the application page (public/index.html)
+    - Verify that attempting to call `$('btn-history-refresh').addEventListener('click', loadHistory)` on unfixed code throws `TypeError: Cannot read properties of null (reading 'addEventListener')`
+    - Verify that attempting to call `$('btn-history-clear').addEventListener('click', clearHistory)` on unfixed code throws `TypeError: Cannot read properties of null (reading 'addEventListener')`
+    - Verify that these elements do not exist in the DOM (`$('btn-history-refresh') === null` and `$('btn-history-clear') === null`)
+    - Verify that JavaScript execution halts after the error (subsequent code does not execute)
+  - The test assertions should match the Expected Behavior Properties from design:
+    - After fix: `safeAddEventListener('btn-history-refresh', 'click', loadHistory)` should return false without throwing an error
+    - After fix: `safeAddEventListener('btn-history-clear', 'click', clearHistory)` should return false without throwing an error
+    - After fix: JavaScript execution should continue normally
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bug exists)
+  - Document counterexamples found to understand root cause:
+    - Counterexample 1: `$('btn-history-refresh')` returns null, causing crash at line 751
+    - Counterexample 2: `$('btn-history-clear')` returns null, causing crash at line 752
+    - Root cause: Missing HTML elements combined with no defensive null checks
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Event Listeners Continue to Work
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for non-buggy inputs (existing DOM elements):
+    - Note: Since unfixed code crashes at line 751, we need to temporarily comment out lines 751-752 to observe baseline behavior
+    - Observe: `$('btn-clear-log').addEventListener('click', clearLog)` successfully attaches listener
+    - Observe: `$('log-container').addEventListener('scroll', scrollHandler)` successfully attaches listener
+    - Observe: `$('btn-test-webhook').addEventListener('click', testWebhook)` successfully attaches listener
+    - Observe: `$('btn-test-email').addEventListener('click', testEmail)` successfully attaches listener
+    - Observe: `$('btn-email-secret').addEventListener('click', toggleHandler)` successfully attaches listener
+    - Observe: Clicking these buttons triggers their respective handler functions correctly
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements:
+    - For all existing element IDs in ['btn-clear-log', 'log-container', 'btn-test-webhook', 'btn-test-email', 'btn-email-secret'], verify that:
+      - `$(elementId)` returns a non-null element
+      - `safeAddEventListener(elementId, eventType, handler)` returns true
+      - The event listener is successfully attached
+      - Triggering the event executes the handler function
+  - Property-based testing generates many test cases for stronger guarantees:
+    - Test with all existing button elements in the DOM
+    - Test with different event types (click, scroll, change)
+    - Test that handler functions are called with correct event objects
+  - Run tests on UNFIXED code (with lines 751-752 temporarily commented out)
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 3. Fix for null element event listener crash
+
+  - [x] 3.1 Implement the safeAddEventListener helper function
+    - Create a new helper function `safeAddEventListener(elementId, eventType, handler)` in public/app.js
+    - Add null check: `const element = $(elementId); if (!element) return false;`
+    - Attach listener if element exists: `element.addEventListener(eventType, handler); return true;`
+    - Add console warning for missing elements: `console.warn(\`Element '\${elementId}' not found, skipping event listener\`);`
+    - Place the helper function near the top of the DOMContentLoaded event handler (around line 705)
+    - _Bug_Condition: isBugCondition(input) where input.elementId IN ['btn-history-refresh', 'btn-history-clear'] AND input.domExists == false_
+    - _Expected_Behavior: For any element ID where $(elementId) returns null, skip event listener attachment without throwing an error, allowing JavaScript execution to continue normally_
+    - _Preservation: All existing event listeners for valid DOM elements must continue to attach successfully and work exactly as before_
+    - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3_
+
+  - [x] 3.2 Refactor event listener attachments to use safe helper
+    - Replace line 751: `$('btn-history-refresh').addEventListener('click', loadHistory);` with `safeAddEventListener('btn-history-refresh', 'click', loadHistory);`
+    - Replace line 752: `$('btn-history-clear').addEventListener('click', clearHistory);` with `safeAddEventListener('btn-history-clear', 'click', clearHistory);`
+    - Verify the refactored code compiles without syntax errors
+    - _Bug_Condition: isBugCondition(input) where input.elementId IN ['btn-history-refresh', 'btn-history-clear'] AND input.domExists == false_
+    - _Expected_Behavior: For any element ID where $(elementId) returns null, skip event listener attachment without throwing an error_
+    - _Preservation: All existing event listeners for valid DOM elements must continue to attach successfully_
+    - _Requirements: 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+  - [x] 3.3 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Safe Event Listener Attachment
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - Verify that `safeAddEventListener('btn-history-refresh', 'click', loadHistory)` returns false without throwing an error
+    - Verify that `safeAddEventListener('btn-history-clear', 'click', clearHistory)` returns false without throwing an error
+    - Verify that JavaScript execution continues normally after attempting to attach listeners to non-existent elements
+    - Verify that console warnings are logged for missing elements
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.4 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Event Listeners Continue to Work
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - Verify that all existing element IDs still have their event listeners attached successfully
+    - Verify that clicking existing buttons (btn-clear-log, btn-test-webhook, btn-test-email, btn-email-secret) triggers their respective handler functions
+    - Verify that the log-container scroll event listener still works correctly
+    - Verify that no existing functionality is broken
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run all tests (exploration test from task 1 and preservation tests from task 2)
+  - Verify that the bug condition exploration test now passes (confirms bug is fixed)
+  - Verify that all preservation tests still pass (confirms no regressions)
+  - Load the application in a browser and verify:
+    - No console errors occur on page load
+    - All existing buttons are clickable and functional
+    - The application initializes completely
+    - Console warnings appear for missing elements (btn-history-refresh, btn-history-clear)
+  - If any issues arise, investigate and fix before marking complete
+  - Ask the user if questions arise

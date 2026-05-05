@@ -64,6 +64,7 @@
         <button class="tab-btn active" id="mode-s3" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">S3</button>
         <button class="tab-btn" id="mode-db" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">Database</button>
         <button class="tab-btn" id="mode-cluster" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">Cluster</button>
+        <button class="tab-btn" id="mode-backup" style="padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;">Backup</button>
       </div>
       <div id="status-badge" class="badge" style="background:#1e293b;color:#64748b;border:1px solid #334155;">
         <span id="status-dot" style="width:7px;height:7px;border-radius:50%;background:#475569;display:inline-block;"></span>
@@ -621,24 +622,350 @@
     </div>
   </div>
 
-  <!-- Sync History -->
+  <!-- Active Jobs -->
   <div class="card" style="padding:18px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <span style="font-size:13px;font-weight:600;color:white;">Sync History</span>
+      <span style="font-size:13px;font-weight:600;color:white;">Active Jobs</span>
       <div style="display:flex;gap:5px;">
-        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" id="btn-history-refresh">Refresh</button>
-        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" id="btn-history-clear">Clear</button>
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;" id="btn-jobs-refresh">Refresh</button>
       </div>
     </div>
-    <div id="history-container" style="max-height:260px;overflow-y:auto;">
-      <div id="history-empty" style="text-align:center;color:#334155;font-size:13px;padding:24px 0;">No sync history yet</div>
+    <div id="jobs-container" style="max-height:280px;overflow-y:auto;">
+      <div id="jobs-empty" style="text-align:center;color:#334155;font-size:13px;padding:24px 0;">No active jobs - start a sync to create one</div>
     </div>
   </div>
 
 </div>
 </main>
 
+<!-- ══ Backup Panel (full-width, hidden by default) ═════════════════════ -->
+<div id="backup-panel" style="display:none;max-width:1400px;margin:0 auto;padding:0 24px 24px;">
+
+  <!-- Sub-tab bar -->
+  <div style="display:flex;gap:4px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:4px;margin-bottom:16px;width:fit-content;">
+    <button class="tab-btn active" id="backup-tab-jobs">Jobs</button>
+    <button class="tab-btn" id="backup-tab-catalog">Catalog</button>
+    <button class="tab-btn" id="backup-tab-run">Run / Progress</button>
+  </div>
+
+  <!-- ── Jobs sub-section ──────────────────────────────────────────────── -->
+  <div id="backup-jobs-section" style="display:grid;grid-template-columns:420px 1fr;gap:20px;align-items:start;">
+
+    <!-- Left: Job editor form -->
+    <div style="display:flex;flex-direction:column;gap:14px;">
+
+      <!-- Source Database -->
+      <div class="card" style="padding:18px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+          <div style="width:22px;height:22px;background:rgba(59,130,246,.15);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </div>
+          <span style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Source Database</span>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+            <span id="bkp-src-status-dot" style="width:7px;height:7px;border-radius:50%;background:#334155;display:inline-block;" title="Not tested"></span>
+            <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;" id="btn-bkp-src-test"><span id="bkp-src-test-label">Test</span></button>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;">
+            <div><label class="label" for="bkp-src-host">Host</label><input class="inp" id="bkp-src-host" type="text" placeholder="localhost"/></div>
+            <div><label class="label" for="bkp-src-port">Port</label><input class="inp" id="bkp-src-port" type="number" placeholder="5432" value="5432"/></div>
+          </div>
+          <div><label class="label" for="bkp-src-database">Database</label><input class="inp" id="bkp-src-database" type="text" placeholder="mydb"/></div>
+          <div><label class="label" for="bkp-src-user">Username</label><input class="inp" id="bkp-src-user" type="text" placeholder="postgres" autocomplete="off"/></div>
+          <div><label class="label" for="bkp-src-password">Password</label><input class="inp" id="bkp-src-password" type="password" placeholder="••••••••" autocomplete="off"/></div>
+          <div><label class="label" for="bkp-src-ssl">SSL Mode</label>
+            <select class="inp" id="bkp-src-ssl">
+              <option value="disable">disable</option>
+              <option value="require">require</option>
+              <option value="verify-full">verify-full</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Storage Targets -->
+      <div class="card" style="padding:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <span style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Storage Targets</span>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" id="btn-bkp-add-s3">+ S3</button>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" id="btn-bkp-add-local">+ Local</button>
+          </div>
+        </div>
+        <div id="backup-storage-targets" style="display:flex;flex-direction:column;gap:10px;">
+          <div style="font-size:12px;color:#475569;text-align:center;padding:12px 0;">No storage targets — add S3 or local</div>
+        </div>
+      </div>
+
+      <!-- Format & Compression -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Format & Compression</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div><label class="label" for="bkp-format">Backup Format</label>
+            <select class="inp" id="bkp-format">
+              <option value="custom">custom (pg_dump -Fc, recommended)</option>
+              <option value="plain">plain SQL (-Fp)</option>
+              <option value="directory">directory (-Fd, parallel restore)</option>
+              <option value="tar">tar (-Ft)</option>
+            </select>
+          </div>
+          <div><label class="label" for="bkp-compression">Compression</label>
+            <select class="inp" id="bkp-compression">
+              <option value="none">none</option>
+              <option value="gzip" selected>gzip</option>
+              <option value="lz4">lz4</option>
+            </select>
+          </div>
+          <div id="bkp-compression-level-row" style="display:flex;align-items:center;gap:10px;">
+            <label class="label" for="bkp-compression-level" style="margin-bottom:0;white-space:nowrap;">Level</label>
+            <input type="range" id="bkp-compression-level" min="1" max="9" value="6" style="flex:1;accent-color:#3b82f6;"/>
+            <span id="bkp-compression-level-val" style="font-size:12px;color:#94a3b8;min-width:14px;">6</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selective Backup -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Selective Backup <span style="font-weight:400;color:#475569;">(optional)</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div><label class="label" for="bkp-include-tables">Include Tables <span style="color:#475569">(one per line, blank = all)</span></label><textarea class="inp" id="bkp-include-tables" placeholder="users&#10;orders" style="min-height:56px;"></textarea></div>
+          <div><label class="label" for="bkp-exclude-tables">Exclude Tables</label><textarea class="inp" id="bkp-exclude-tables" placeholder="logs&#10;audit" style="min-height:56px;"></textarea></div>
+          <div><label class="label" for="bkp-include-schemas">Include Schemas</label><textarea class="inp" id="bkp-include-schemas" placeholder="public" style="min-height:40px;"></textarea></div>
+          <div><label class="label" for="bkp-exclude-schemas">Exclude Schemas</label><textarea class="inp" id="bkp-exclude-schemas" placeholder="pg_temp" style="min-height:40px;"></textarea></div>
+        </div>
+      </div>
+
+      <!-- Schedule -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Schedule <span style="font-weight:400;color:#475569;">(optional)</span></div>
+        <div><label class="label" for="bkp-schedule">Cron expression or interval (seconds)</label>
+          <input class="inp" id="bkp-schedule" type="text" placeholder="0 2 * * *  or  3600"/>
+          <div style="font-size:11px;color:#475569;margin-top:4px;">Examples: <code style="color:#94a3b8;">0 2 * * *</code> = daily at 2am &nbsp;|&nbsp; <code style="color:#94a3b8;">3600</code> = every hour</div>
+        </div>
+      </div>
+
+      <!-- Retention Policy -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Retention Policy <span style="font-weight:400;color:#475569;">(optional)</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><label class="label" for="bkp-keep-last">Keep Last N</label><input class="inp" id="bkp-keep-last" type="number" min="0" placeholder="7"/></div>
+          <div><label class="label" for="bkp-keep-daily">Daily For (days)</label><input class="inp" id="bkp-keep-daily" type="number" min="0" placeholder="30"/></div>
+          <div><label class="label" for="bkp-keep-weekly">Weekly For (weeks)</label><input class="inp" id="bkp-keep-weekly" type="number" min="0" placeholder="12"/></div>
+          <div><label class="label" for="bkp-keep-monthly">Monthly For (months)</label><input class="inp" id="bkp-keep-monthly" type="number" min="0" placeholder="12"/></div>
+        </div>
+      </div>
+
+      <!-- Encryption -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Encryption at Rest</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;background:#1e293b;border-radius:8px;margin-bottom:10px;">
+          <input type="checkbox" id="bkp-encrypt-enabled" style="width:14px;height:14px;accent-color:#3b82f6;"/>
+          <div><div style="font-size:12px;font-weight:500;color:#e2e8f0;">Enable AES-256-GCM encryption</div><div style="font-size:11px;color:#475569;">Artifacts encrypted before storage</div></div>
+        </label>
+        <div id="bkp-passphrase-row" style="display:none;">
+          <label class="label" for="bkp-passphrase">Passphrase</label>
+          <input class="inp" id="bkp-passphrase" type="password" placeholder="Strong passphrase…" autocomplete="off"/>
+          <div style="font-size:11px;color:#f87171;margin-top:4px;">⚠ Store this passphrase safely — lost passphrases cannot be recovered.</div>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Notifications</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+
+          <!-- Webhook section -->
+          <div style="background:#1e293b;border-radius:8px;padding:12px;">
+            <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:8px;">WEBHOOK (Slack / Google Chat / Discord / Custom)</div>
+            <div style="display:flex;gap:6px;align-items:flex-end;">
+              <div style="flex:1;">
+                <label class="label" for="bkp-webhook-url">Webhook URL</label>
+                <input class="inp" id="bkp-webhook-url" type="url" placeholder="https://chat.googleapis.com/v1/spaces/…/messages?key=…"/>
+              </div>
+              <button class="btn btn-ghost" style="padding:7px 10px;font-size:11px;white-space:nowrap;flex-shrink:0;" id="btn-bkp-test-webhook">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 2 11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                Test
+              </button>
+            </div>
+            <div style="display:flex;gap:12px;margin-top:8px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;"><input type="checkbox" id="bkp-webhook-complete" checked style="accent-color:#3b82f6;"/> On complete</label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;"><input type="checkbox" id="bkp-webhook-failure" checked style="accent-color:#3b82f6;"/> On failure</label>
+            </div>
+          </div>
+
+          <!-- Email section -->
+          <div style="background:#1e293b;border-radius:8px;padding:12px;">
+            <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:8px;">EMAIL (SMTP)</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:grid;grid-template-columns:1fr 72px;gap:8px;">
+                <div><label class="label" for="bkp-email-host">SMTP Host</label><input class="inp" id="bkp-email-host" type="text" placeholder="smtp.gmail.com"/></div>
+                <div><label class="label" for="bkp-email-port">Port</label><input class="inp" id="bkp-email-port" type="number" value="587"/></div>
+              </div>
+              <div><label class="label" for="bkp-email-user">SMTP Username</label><input class="inp" id="bkp-email-user" type="text" placeholder="user@example.com"/></div>
+              <div><label class="label" for="bkp-email-pass">SMTP Password</label><input class="inp" id="bkp-email-pass" type="password" placeholder="••••••••"/></div>
+              <div><label class="label" for="bkp-email-from">From</label><input class="inp" id="bkp-email-from" type="email" placeholder="backup@example.com"/></div>
+              <div><label class="label" for="bkp-email-to">To</label><input class="inp" id="bkp-email-to" type="email" placeholder="admin@example.com"/></div>
+              <div style="display:flex;gap:12px;">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;"><input type="checkbox" id="bkp-email-complete" checked style="accent-color:#3b82f6;"/> On complete</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;"><input type="checkbox" id="bkp-email-failure" checked style="accent-color:#3b82f6;"/> On failure</label>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-ghost" style="width:100%;font-size:12px;" id="btn-bkp-test-notification">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 2 11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send Test Notification (Webhook + Email)
+          </button>
+        </div>
+      </div>
+
+      <!-- Job name + actions -->
+      <div class="card" style="padding:18px;">
+        <div><label class="label" for="bkp-job-name">Job Name</label><input class="inp" id="bkp-job-name" type="text" placeholder="e.g. prod-nightly"/></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px;">
+          <button class="btn btn-primary" id="btn-bkp-save-job">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save Job
+          </button>
+          <button class="btn btn-purple" id="btn-bkp-run-now">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Run Now
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Saved jobs list -->
+    <div class="card" style="padding:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-size:13px;font-weight:600;color:white;">Saved Backup Jobs</span>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" id="btn-bkp-refresh-jobs">Refresh</button>
+      </div>
+      <div id="backup-job-list" style="display:flex;flex-direction:column;gap:8px;">
+        <div style="font-size:12px;color:#475569;text-align:center;padding:24px 0;">No backup jobs saved yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Catalog sub-section ───────────────────────────────────────────── -->
+  <div id="backup-catalog-section" style="display:none;">
+    <div class="card" style="padding:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <span style="font-size:13px;font-weight:600;color:white;">Backup Catalog</span>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;" id="btn-bkp-refresh-catalog">Refresh</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="backup-catalog-table" style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="border-bottom:1px solid #1e293b;">
+              <th style="text-align:left;padding:8px 10px;color:#64748b;font-weight:500;cursor:pointer;" data-sort="jobName">Job Name ↕</th>
+              <th style="text-align:left;padding:8px 10px;color:#64748b;font-weight:500;cursor:pointer;" data-sort="startedAt">Started At ↕</th>
+              <th style="text-align:left;padding:8px 10px;color:#64748b;font-weight:500;">Format</th>
+              <th style="text-align:right;padding:8px 10px;color:#64748b;font-weight:500;cursor:pointer;" data-sort="sizeBytes">Size ↕</th>
+              <th style="text-align:right;padding:8px 10px;color:#64748b;font-weight:500;cursor:pointer;" data-sort="durationMs">Duration ↕</th>
+              <th style="text-align:left;padding:8px 10px;color:#64748b;font-weight:500;">Status</th>
+              <th style="text-align:right;padding:8px 10px;color:#64748b;font-weight:500;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="backup-catalog-tbody">
+            <tr><td colspan="7" style="text-align:center;padding:32px;color:#475569;">No backups yet — run a backup job to see results here</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Run / Progress sub-section ───────────────────────────────────── -->
+  <div id="backup-run-section" style="display:none;">
+    <div style="display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;">
+
+      <!-- Progress card -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:13px;font-weight:600;color:white;margin-bottom:16px;">Backup / Restore Progress</div>
+
+        <!-- Phase indicator -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+          <div id="backup-phase-dot" style="width:10px;height:10px;border-radius:50%;background:#475569;flex-shrink:0;"></div>
+          <span id="backup-phase" style="font-size:13px;color:#94a3b8;">Idle</span>
+        </div>
+
+        <!-- Progress bar -->
+        <div style="height:7px;background:#1e293b;border-radius:99px;overflow:hidden;margin-bottom:10px;">
+          <div id="backup-progress-bar" class="prog" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#7c3aed);border-radius:99px;"></div>
+        </div>
+
+        <!-- Stats row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px;">
+          <div style="background:#1e293b;border-radius:8px;padding:10px;">
+            <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Elapsed</div>
+            <div id="backup-elapsed" style="font-size:18px;font-weight:700;color:white;">—</div>
+          </div>
+          <div style="background:#1e293b;border-radius:8px;padding:10px;">
+            <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Remaining</div>
+            <div id="backup-remaining" style="font-size:18px;font-weight:700;color:#94a3b8;">—</div>
+          </div>
+          <div style="background:#1e293b;border-radius:8px;padding:10px;">
+            <div style="font-size:11px;color:#64748b;margin-bottom:3px;">Bytes Written</div>
+            <div id="backup-bytes" style="font-size:18px;font-weight:700;color:#60a5fa;">—</div>
+          </div>
+        </div>
+
+        <!-- Last operation summary -->
+        <div id="backup-last-summary" style="background:#1e293b;border-radius:8px;padding:12px;font-size:12px;color:#64748b;">
+          No recent backup or restore operations.
+        </div>
+      </div>
+
+      <!-- Active backup info -->
+      <div class="card" style="padding:18px;">
+        <div style="font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Current Operation</div>
+        <div id="backup-current-op" style="font-size:12px;color:#475569;">No operation in progress.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══ Restore Modal ════════════════════════════════════════════════════ -->
+<div id="restore-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:center;justify-content:center;">
+  <div class="card" style="padding:24px;width:440px;max-width:95vw;">
+    <div style="font-size:15px;font-weight:600;color:white;margin-bottom:16px;">Restore Backup</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;">
+        <div><label class="label" for="restore-host">Target Host</label><input class="inp" id="restore-host" type="text" placeholder="localhost"/></div>
+        <div><label class="label" for="restore-port">Port</label><input class="inp" id="restore-port" type="number" value="5432"/></div>
+      </div>
+      <div><label class="label" for="restore-database">Database</label><input class="inp" id="restore-database" type="text" placeholder="mydb"/></div>
+      <div><label class="label" for="restore-user">Username</label><input class="inp" id="restore-user" type="text" placeholder="postgres" autocomplete="off"/></div>
+      <div><label class="label" for="restore-password">Password</label><input class="inp" id="restore-password" type="password" placeholder="••••••••" autocomplete="off"/></div>
+      <div id="restore-passphrase-row" style="display:none;">
+        <label class="label" for="restore-passphrase">Backup Passphrase</label>
+        <input class="inp" id="restore-passphrase" type="password" placeholder="Encryption passphrase…" autocomplete="off"/>
+      </div>
+      <div style="display:flex;gap:16px;padding:10px;background:#1e293b;border-radius:8px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+          <input type="checkbox" id="restore-clean" style="accent-color:#3b82f6;"/> Clean before restore
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#e2e8f0;">
+          <input type="checkbox" id="restore-create-db" style="accent-color:#3b82f6;"/> Create database
+        </label>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;">
+        <button class="btn btn-ghost" id="btn-restore-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-restore-submit">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.27"/></svg>
+          Restore
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script src="/app.js"></script>
+
+<!-- ── Toast notification ──────────────────────────────────────────── -->
+<div id="toast-container" style="position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;pointer-events:none;"></div>
 </body>
 </html>
