@@ -667,6 +667,14 @@
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:9px;">
+          <div><label class="label" for="bkp-db-type">Database Type</label>
+            <select class="inp" id="bkp-db-type">
+              <option value="postgresql">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+              <option value="mariadb">MariaDB</option>
+              <option value="mongodb">MongoDB</option>
+            </select>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 80px;gap:8px;">
             <div><label class="label" for="bkp-src-host">Host</label><input class="inp" id="bkp-src-host" type="text" placeholder="localhost"/></div>
             <div><label class="label" for="bkp-src-port">Port</label><input class="inp" id="bkp-src-port" type="number" placeholder="5432" value="5432"/></div>
@@ -681,6 +689,9 @@
               <option value="verify-full">verify-full</option>
             </select>
           </div>
+          <!-- MongoDB-specific fields (Task 11.1, 11.2) -->
+          <div id="bkp-src-connection-uri-row" style="display:none;"><label class="label" for="bkp-src-connection-uri">Connection URI</label><input class="inp" id="bkp-src-connection-uri" type="text" placeholder="mongodb://user:pass@host:27017/dbname"/></div>
+          <div id="bkp-src-auth-database-row" style="display:none;"><label class="label" for="bkp-src-auth-database">Auth Database <span style="color:#475569">(optional, default: admin)</span></label><input class="inp" id="bkp-src-auth-database" type="text" placeholder="admin" value="admin"/></div>
         </div>
       </div>
 

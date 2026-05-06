@@ -24,15 +24,21 @@ function persist(jobs) {
 
 /**
  * Redact secrets from a single BackupJob for safe list/display.
- * Redacts: source.password, storageTargets[].secretAccessKey,
+ * Redacts: source.password, source.connectionUri, storageTargets[].secretAccessKey,
  *          encryption.passphrase, notifications.email.pass
  */
 function redactSecrets(job) {
   const redacted = { ...job };
 
-  // Redact source password
+  // Redact source password and connectionUri
   if (redacted.source) {
-    redacted.source = { ...redacted.source, password: '***' };
+    redacted.source = { ...redacted.source };
+    if ('password' in redacted.source) {
+      redacted.source.password = '***';
+    }
+    if ('connectionUri' in redacted.source) {
+      redacted.source.connectionUri = '***';
+    }
   }
 
   // Redact secretAccessKey on each S3 storage target

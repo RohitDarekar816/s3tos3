@@ -14,9 +14,30 @@ RUN npm install --omit=dev --no-audit --no-fund
 # ── Stage 2: production runtime ────────────────────────────────────────────
 FROM node:20-alpine AS runtime
 
-# Install PostgreSQL client tools (pg_dump, pg_restore, psql) needed for
-# the database backup feature. Use the same major version as your databases.
-RUN apk add --no-cache postgresql16-client
+# Install database client tools for all supported backup types.
+# All packages are installed in a single layer to minimise image size.
+RUN apk add --no-cache \
+    postgresql16-client \
+    mysql-client \
+    curl \
+    gcompat \
+    krb5-libs \
+    libc6-compat \
+    && \
+    # MongoDB tools are not in the standard Alpine repos.
+    # Install from the official MongoDB tarballs (using Ubuntu builds with gcompat for glibc compatibility).
+    # mongodump, mongorestore: from mongodb-database-tools
+    # mongosh: from mongosh package
+    # See: https://www.mongodb.com/try/download/database-tools
+    curl -fsSL "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2004-x86_64-100.16.1.tgz" -o /tmp/mongo-tools.tgz \
+    && tar -xzf /tmp/mongo-tools.tgz -C /tmp \
+    && cp /tmp/mongodb-database-tools-*/bin/* /usr/local/bin/ \
+    && rm -rf /tmp/mongo-tools.tgz /tmp/mongodb-database-tools-* \
+    && curl -fsSL "https://downloads.mongodb.com/compass/mongosh-2.3.7-linux-x64.tgz" -o /tmp/mongosh.tgz \
+    && tar -xzf /tmp/mongosh.tgz -C /tmp \
+    && cp /tmp/mongosh-*/bin/* /usr/local/bin/ \
+    && rm -rf /tmp/mongosh.tgz /tmp/mongosh-* \
+    && apk del curl
 
 # Non-root user for least-privilege execution
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup

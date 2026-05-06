@@ -21,6 +21,45 @@ import { log, debug } from './logger.js';
 import { notify } from './notifier.js';
 import { createEncryptStream, createDecryptStream } from './backupCrypto.js';
 
+// Database drivers
+import * as postgresqlDriver from './dbDrivers/postgresql.js';
+import * as mysqlDriver from './dbDrivers/mysql.js';
+import * as mongodbDriver from './dbDrivers/mongodb.js';
+
+// ---------------------------------------------------------------------------
+// Driver dispatcher
+// ---------------------------------------------------------------------------
+
+/**
+ * Map of database type strings to driver modules.
+ * MariaDB reuses the MySQL driver.
+ */
+const DRIVERS = {
+  postgresql: postgresqlDriver,
+  mysql: mysqlDriver,
+  mariadb: mysqlDriver,
+  mongodb: mongodbDriver,
+};
+
+const VALID_DB_TYPES = new Set(Object.keys(DRIVERS));
+
+/**
+ * Return the driver for a given dbType, defaulting to postgresql.
+ * Throws with HTTP 400 if the type is explicitly set but invalid.
+ * @param {string|null|undefined} dbType
+ * @returns {{ driver: object, resolvedType: string }}
+ */
+export function getDriver(dbType) {
+  const type = dbType || 'postgresql';
+  const driver = DRIVERS[type];
+  if (!driver) {
+    const err = new Error(`Unsupported dbType "${type}". Valid values: ${[...VALID_DB_TYPES].join(', ')}`);
+    err.status = 400;
+    throw err;
+  }
+  return { driver, resolvedType: type };
+}
+
 // ---------------------------------------------------------------------------
 // Internal state (Task 7.1)
 // ---------------------------------------------------------------------------
@@ -339,28 +378,49 @@ async function _runBackup(backupId, jobConfig, abortController, startedAt) {
     const encryption = jobConfig.encryption || null;
     const storageTargets = jobConfig.storageTargets || [];
 
-    // Build pg_dump args
-    const pgArgs = buildPgDumpArgs(jobConfig);
-    debug(`_runBackup ${backupId}: pg_dump args: ${pgArgs.join(' ')}`);
+    // Get the appropriate driver for this database type
+    const { driver, resolvedType } = getDriver(jobConfig.dbType);
+    debug(`_runBackup ${backupId}: using driver for dbType=${resolvedType}`);
 
-    // Spawn pg_dump
-    phase = 'dumping';
-    const pgEnv = {
-      ...process.env,
-      PGPASSWORD: jobConfig.source?.password || '',
-    };
-    if (jobConfig.source?.sslMode) {
-      pgEnv.PGSSLMODE = jobConfig.source.sslMode;
+    // Build backup tool args using driver
+    const backupArgs = driver.buildBackupArgs(jobConfig);
+    debug(`_runBackup ${backupId}: backup args: ${backupArgs.join(' ')}`);
+
+    // Determine the backup tool command based on dbType
+    let backupCommand;
+    let backupEnv = { ...process.env };
+    
+    switch (resolvedType) {
+      case 'postgresql':
+        backupCommand = 'pg_dump';
+        backupEnv.PGPASSWORD = jobConfig.source?.password || '';
+        if (jobConfig.source?.sslMode) {
+          backupEnv.PGSSLMODE = jobConfig.source.sslMode;
+        }
+        break;
+      case 'mysql':
+      case 'mariadb':
+        backupCommand = 'mysqldump';
+        backupEnv.MYSQL_PWD = jobConfig.source?.password || '';
+        break;
+      case 'mongodb':
+        backupCommand = 'mongodump';
+        // MongoDB uses connection URI with embedded credentials, no separate env var needed
+        break;
+      default:
+        throw new Error(`Unsupported dbType: ${resolvedType}`);
     }
 
-    const pgDump = spawn('pg_dump', pgArgs, {
-      env: pgEnv,
+    // Spawn backup tool
+    phase = 'dumping';
+    const backupProc = spawn(backupCommand, backupArgs, {
+      env: backupEnv,
       signal: abortController.signal,
     });
 
     // Collect stderr for error reporting
     const stderrChunks = [];
-    pgDump.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+    backupProc.stderr.on('data', (chunk) => stderrChunks.push(chunk));
 
     // Set up progress interval
     progressInterval = setInterval(() => {
@@ -373,16 +433,26 @@ async function _runBackup(backupId, jobConfig, abortController, startedAt) {
       });
     }, 4000);
 
-    // Build the pipeline: pg_dump stdout → [compress] → [encrypt] → buffer
-    let dataStream = pgDump.stdout;
+    // Build the pipeline: backup tool stdout → [compress] → [encrypt] → buffer
+    let dataStream = backupProc.stdout;
 
-    // Apply compression (for non-custom formats — custom uses pg_dump's -Z)
-    if (format !== 'custom' && compression?.type === 'gzip') {
+    // Apply compression based on database type and format:
+    // - PostgreSQL custom format: uses pg_dump's -Z flag (already in args, no external compression needed)
+    // - PostgreSQL other formats (plain, tar, directory): need external compression
+    // - MySQL/MariaDB: need external compression (mysqldump has no built-in compression)
+    // - MongoDB: uses mongodump's --gzip flag (already in args, no external compression needed)
+    
+    const needsExternalCompression = compression?.type === 'gzip' && (
+      (resolvedType === 'postgresql' && format !== 'custom') ||
+      (resolvedType === 'mysql' || resolvedType === 'mariadb')
+    );
+    
+    if (needsExternalCompression) {
       phase = 'compressing';
       const level = compression.level ?? 6;
       const gzip = zlib.createGzip({ level });
       dataStream = dataStream.pipe(gzip);
-    } else if (format !== 'custom' && compression?.type === 'lz4') {
+    } else if (compression?.type === 'lz4') {
       // lz4 is not natively supported in Node — fall back to gzip with a note
       log('warning', `lz4 compression not natively available; falling back to gzip for backup ${backupId}`);
       phase = 'compressing';
@@ -400,17 +470,17 @@ async function _runBackup(backupId, jobConfig, abortController, startedAt) {
       bytesWritten += chunk.length;
     });
 
-    // Wait for pg_dump to finish
+    // Wait for backup tool to finish
     await new Promise((resolve, reject) => {
-      pgDump.on('close', (code) => {
+      backupProc.on('close', (code) => {
         if (code !== 0) {
           const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-          reject(new Error(`pg_dump exited with code ${code}: ${stderr}`));
+          reject(new Error(`${backupCommand} exited with code ${code}: ${stderr}`));
         } else {
           resolve();
         }
       });
-      pgDump.on('error', reject);
+      backupProc.on('error', reject);
       dataStream.on('error', reject);
       dataStream.on('end', resolve);
     });
@@ -447,7 +517,7 @@ async function _runBackup(backupId, jobConfig, abortController, startedAt) {
       estimatedRemainingMs: null,
     });
 
-    const ext = getArtifactExtension(format, compression);
+    const ext = driver.getArtifactExtension(format, compression);
     const prefix = storageTargets[0]?.prefix || 'backups';
     const artifactName = BackupStore.buildArtifactPath(
       prefix,
@@ -721,18 +791,122 @@ async function _runRestore(backupId, record, target, restoreOptions, passphrase,
     phase = 'restoring';
     _io?.emit('restore:progress', { backupId, phase, elapsedMs: Date.now() - startMs });
 
-    const format = record.format || 'custom';
-    const targetEnv = {
-      ...process.env,
-      PGPASSWORD: target.password || '',
-    };
+    // Get the appropriate driver for this database type (default to postgresql for backward compatibility)
+    const { driver, resolvedType } = getDriver(record.dbType);
+    debug(`_runRestore ${backupId}: using driver for dbType=${resolvedType}`);
 
-    if (format === 'plain') {
-      // Pipe SQL to psql (req 8.3)
-      await _restoreWithPsql(artifactBuffer, target, targetEnv, abortController);
-    } else {
-      // Use pg_restore for custom/directory/tar (req 8.2)
-      await _restoreWithPgRestore(artifactBuffer, target, restoreOptions, format, targetEnv, abortController);
+    // Build restore tool args using driver
+    const restoreArgs = driver.buildRestoreArgs(target, restoreOptions, record);
+    debug(`_runRestore ${backupId}: restore args: ${restoreArgs.join(' ')}`);
+
+    // Determine the restore tool command and environment based on dbType
+    let restoreCommand;
+    let restoreEnv = { ...process.env };
+    
+    switch (resolvedType) {
+      case 'postgresql':
+        // PostgreSQL uses psql for plain format, pg_restore for others
+        const format = record.format || 'custom';
+        if (format === 'plain') {
+          restoreCommand = 'psql';
+        } else {
+          restoreCommand = 'pg_restore';
+        }
+        restoreEnv.PGPASSWORD = target.password || '';
+        break;
+      case 'mysql':
+      case 'mariadb':
+        restoreCommand = 'mysql';
+        restoreEnv.MYSQL_PWD = target.password || '';
+        break;
+      case 'mongodb':
+        restoreCommand = 'mongorestore';
+        // MongoDB uses connection URI with embedded credentials, no separate env var needed
+        break;
+      default:
+        throw new Error(`Unsupported dbType for restore: ${resolvedType}`);
+    }
+
+    // Handle decompression for MySQL/MariaDB if needed
+    if ((resolvedType === 'mysql' || resolvedType === 'mariadb') && record.compression?.type === 'gzip') {
+      debug(`_runRestore ${backupId}: decompressing MySQL/MariaDB artifact`);
+      artifactBuffer = await new Promise((resolve, reject) => {
+        const gunzip = zlib.createGunzip();
+        const chunks = [];
+        gunzip.on('data', (chunk) => chunks.push(chunk));
+        gunzip.on('end', () => resolve(Buffer.concat(chunks)));
+        gunzip.on('error', reject);
+        gunzip.end(artifactBuffer);
+      });
+    }
+
+    // Write artifact to temp file and execute restore command
+    const os = await import('os');
+    const format = record.format || 'custom';
+    let ext;
+    switch (resolvedType) {
+      case 'postgresql':
+        ext = format === 'tar' ? 'tar' : format === 'plain' ? 'sql' : 'dump';
+        break;
+      case 'mysql':
+      case 'mariadb':
+        ext = 'sql';
+        break;
+      case 'mongodb':
+        ext = format === 'archive' ? 'bson' : 'bson';
+        break;
+      default:
+        ext = 'dump';
+    }
+    const tmpFile = path.join(os.tmpdir(), `bkp-restore-${crypto.randomUUID()}.${ext}`);
+
+    try {
+      await fs.promises.writeFile(tmpFile, artifactBuffer);
+
+      // For PostgreSQL and MySQL/MariaDB, pass the temp file as an argument
+      // For MongoDB archive format, we need to pipe to stdin
+      let finalArgs;
+      if (resolvedType === 'mongodb' && format === 'archive') {
+        // MongoDB archive format reads from stdin
+        finalArgs = restoreArgs;
+      } else {
+        // PostgreSQL and MySQL read from file argument
+        finalArgs = [...restoreArgs, tmpFile];
+      }
+
+      const restoreProc = spawn(restoreCommand, finalArgs, {
+        env: restoreEnv,
+        signal: abortController.signal,
+      });
+
+      // For MongoDB archive format, pipe the artifact to stdin
+      if (resolvedType === 'mongodb' && format === 'archive') {
+        restoreProc.stdin.write(artifactBuffer);
+        restoreProc.stdin.end();
+      }
+
+      const stderrChunks = [];
+      restoreProc.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+
+      await new Promise((resolve, reject) => {
+        restoreProc.on('close', (code) => {
+          const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
+          if (code === 0) {
+            resolve();
+          } else if (code === 1 && resolvedType === 'postgresql' && restoreCommand === 'pg_restore') {
+            // Exit code 1 = warnings only (non-fatal errors like "table already exists").
+            // pg_restore still restored the data successfully — log and continue.
+            log('warning', `pg_restore completed with warnings: ${stderr.slice(0, 500)}`);
+            resolve();
+          } else {
+            // Fatal error — restore did not complete
+            reject(new Error(`${restoreCommand} exited with code ${code}: ${stderr}`));
+          }
+        });
+        restoreProc.on('error', reject);
+      });
+    } finally {
+      fs.promises.unlink(tmpFile).catch(() => {});
     }
 
     const completedAt = new Date().toISOString();
@@ -765,95 +939,6 @@ async function _runRestore(backupId, record, target, restoreOptions, passphrase,
 
   clearInterval(progressInterval);
   _activeRestores.delete(backupId);
-}
-
-/**
- * Restore a plain SQL backup using psql via a temp file.
- * Using a temp file avoids EPIPE errors from writing large buffers to stdin.
- */
-async function _restoreWithPsql(sqlBuffer, target, env, abortController) {
-  const os = await import('os');
-  const tmpFile = path.join(os.tmpdir(), `bkp-restore-${crypto.randomUUID()}.sql`);
-
-  try {
-    await fs.promises.writeFile(tmpFile, sqlBuffer);
-
-    const psqlArgs = [
-      '-h', target.host,
-      '-p', String(target.port || 5432),
-      '-U', target.user || 'postgres',
-      '-d', target.database,
-      '--no-password',
-      '-f', tmpFile,
-    ];
-
-    const psql = spawn('psql', psqlArgs, {
-      env,
-      signal: abortController.signal,
-    });
-
-    const stderrChunks = [];
-    psql.stderr.on('data', (chunk) => stderrChunks.push(chunk));
-
-    await new Promise((resolve, reject) => {
-      psql.on('close', (code) => {
-        if (code !== 0) {
-          const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-          reject(new Error(`psql exited with code ${code}: ${stderr}`));
-        } else {
-          resolve();
-        }
-      });
-      psql.on('error', reject);
-    });
-  } finally {
-    fs.promises.unlink(tmpFile).catch(() => {});
-  }
-}
-
-/**
- * Restore a custom/directory/tar backup using pg_restore via a temp file.
- * Using a temp file avoids EPIPE errors from writing large buffers to stdin.
- */
-async function _restoreWithPgRestore(artifactBuffer, target, restoreOptions, format, env, abortController) {
-  const os = await import('os');
-  const ext = format === 'tar' ? 'tar' : 'dump';
-  const tmpFile = path.join(os.tmpdir(), `bkp-restore-${crypto.randomUUID()}.${ext}`);
-
-  try {
-    await fs.promises.writeFile(tmpFile, artifactBuffer);
-
-    // Pass file path as argument — pg_restore reads from file, not stdin
-    const pgRestoreArgs = [...buildPgRestoreArgs(target, restoreOptions, format), tmpFile];
-
-    const pgRestore = spawn('pg_restore', pgRestoreArgs, {
-      env,
-      signal: abortController.signal,
-    });
-
-    const stderrChunks = [];
-    pgRestore.stderr.on('data', (chunk) => stderrChunks.push(chunk));
-
-    await new Promise((resolve, reject) => {
-      pgRestore.on('close', (code) => {
-        const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-        if (code === 0) {
-          resolve();
-        } else if (code === 1) {
-          // Exit code 1 = warnings only (non-fatal errors like "table already exists").
-          // pg_restore still restored the data successfully — log and continue.
-          log('warning', `pg_restore completed with warnings: ${stderr.slice(0, 500)}`);
-          resolve();
-        } else {
-          // Exit code 2 = fatal error — restore did not complete
-          reject(new Error(`pg_restore exited with code ${code}: ${stderr}`));
-        }
-      });
-      pgRestore.on('error', reject);
-    });
-  } finally {
-    fs.promises.unlink(tmpFile).catch(() => {});
-  }
 }
 
 

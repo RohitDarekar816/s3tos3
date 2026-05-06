@@ -1249,6 +1249,10 @@ async function deleteJob(jobId) {
   safeAddEventListener('btn-bkp-test-webhook', 'click', testBackupWebhook);
   safeAddEventListener('btn-bkp-src-test', 'click', testBackupSourceConn);
   ['bkp-src-host','bkp-src-port','bkp-src-database','bkp-src-user','bkp-src-password','bkp-src-ssl'].forEach(id => { safeAddEventListener(id, 'input', resetBackupSrcDot); safeAddEventListener(id, 'change', resetBackupSrcDot); });
+  safeAddEventListener('bkp-db-type', 'change', () => {
+    const dbType = document.getElementById('bkp-db-type')?.value;
+    if (dbType) updateBackupFormForDbType(dbType);
+  });
   safeAddEventListener('btn-restore-submit', 'click', submitRestore);
   safeAddEventListener('btn-restore-cancel', 'click', () => { const m = document.getElementById('restore-modal'); if (m) m.style.display = 'none'; });
 
@@ -1311,6 +1315,115 @@ function addLocalTarget() {
   renderStorageTargets();
 }
 
+// ── Backup: Adaptive form for database type ────────────────────────────
+
+// Task 12.1: Define FORMAT_OPTIONS object mapping dbTypes to valid formats
+const FORMAT_OPTIONS = {
+  postgresql: [
+    { value: 'custom',    label: 'custom (pg_dump -Fc, recommended)' },
+    { value: 'plain',     label: 'plain SQL (-Fp)' },
+    { value: 'directory', label: 'directory (-Fd, parallel restore)' },
+    { value: 'tar',       label: 'tar (-Ft)' },
+  ],
+  mysql: [
+    { value: 'sql', label: 'SQL Dump' }
+  ],
+  mariadb: [
+    { value: 'sql', label: 'SQL Dump' }
+  ],
+  mongodb: [
+    { value: 'archive',   label: 'archive (single-file BSON)' },
+    { value: 'directory', label: 'directory (multi-file BSON)' },
+  ],
+};
+
+// Task 12.2: Implement updateFormatOptionsForDbType(dbType)
+function updateFormatOptionsForDbType(dbType) {
+  const formatSelect = document.getElementById('bkp-format');
+  if (!formatSelect) return;
+  
+  const options = FORMAT_OPTIONS[dbType] || FORMAT_OPTIONS.postgresql;
+  
+  // Clear existing options
+  formatSelect.innerHTML = '';
+  
+  // Add new options
+  options.forEach(opt => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    formatSelect.appendChild(option);
+  });
+  
+  // Select the first option by default
+  if (options.length > 0) {
+    formatSelect.value = options[0].value;
+  }
+}
+
+function updateBackupFormForDbType(dbType) {
+  // Get current port value to check if it matches the old default
+  const portField = $('bkp-src-port');
+  const currentPort = portField ? parseInt(portField.value) : null;
+  
+  // Determine old default based on current form state (before change)
+  // We'll check against both defaults to handle any state
+  const oldDefaults = [5432, 3306, 27017];
+  const isDefaultPort = oldDefaults.includes(currentPort);
+  
+  // Field visibility based on database type
+  const showStandardFields = dbType === 'postgresql' || dbType === 'mysql' || dbType === 'mariadb';
+  const showMongoFields = dbType === 'mongodb';
+  const showSchemaField = dbType === 'postgresql';
+  
+  // Get field containers (we need to show/hide the parent divs)
+  const hostRow = $('bkp-src-host')?.parentElement?.parentElement;
+  const databaseField = $('bkp-src-database')?.parentElement;
+  const userField = $('bkp-src-user')?.parentElement;
+  const passwordField = $('bkp-src-password')?.parentElement;
+  const sslField = $('bkp-src-ssl')?.parentElement;
+  
+  // MongoDB-specific fields (Task 11.1, 11.2)
+  const connectionUriRow = $('bkp-src-connection-uri-row');
+  const authDatabaseRow = $('bkp-src-auth-database-row');
+  
+  // Show/hide standard connection fields (host, port, database, username, password)
+  if (hostRow) hostRow.style.display = showStandardFields ? '' : 'none';
+  if (databaseField) databaseField.style.display = showStandardFields ? '' : 'none';
+  if (userField) userField.style.display = showStandardFields ? '' : 'none';
+  if (passwordField) passwordField.style.display = showStandardFields ? '' : 'none';
+  if (sslField) sslField.style.display = showStandardFields ? '' : 'none';
+  
+  // Show/hide MongoDB-specific fields
+  if (connectionUriRow) connectionUriRow.style.display = showMongoFields ? '' : 'none';
+  if (authDatabaseRow) authDatabaseRow.style.display = showMongoFields ? '' : 'none';
+  
+  // Update port default if current value is a default port
+  if (portField && isDefaultPort) {
+    if (dbType === 'postgresql') {
+      portField.value = '5432';
+    } else if (dbType === 'mysql' || dbType === 'mariadb') {
+      portField.value = '3306';
+    } else if (dbType === 'mongodb') {
+      portField.value = '27017';
+    }
+  }
+  
+  // Update port placeholder
+  if (portField) {
+    if (dbType === 'postgresql') {
+      portField.placeholder = '5432';
+    } else if (dbType === 'mysql' || dbType === 'mariadb') {
+      portField.placeholder = '3306';
+    } else if (dbType === 'mongodb') {
+      portField.placeholder = '27017';
+    }
+  }
+  
+  // Task 12.3: Call updateFormatOptionsForDbType() when Database Type changes
+  updateFormatOptionsForDbType(dbType);
+}
+
 // ── Backup: Job config collection ──────────────────────────────────────
 
 function getBackupJobConfig() {
@@ -1326,17 +1439,29 @@ function getBackupJobConfig() {
   const keepMonthly = intOrNull('bkp-keep-monthly');
   const hasRetention = keepLast||keepDaily||keepWeekly||keepMonthly;
 
+  // Task 14.1: Extend getBackupConfig() to include dbType and MongoDB fields
+  const dbType = document.getElementById('bkp-db-type')?.value || 'postgresql';
+  
+  const sourceConfig = {
+    host: strOrNull('bkp-src-host') || '',
+    port: parseInt(document.getElementById('bkp-src-port')?.value) || 5432,
+    database: strOrNull('bkp-src-database') || '',
+    user: strOrNull('bkp-src-user') || '',
+    password: document.getElementById('bkp-src-password')?.value || '',
+    sslMode: document.getElementById('bkp-src-ssl')?.value || 'disable',
+  };
+  
+  // Add MongoDB-specific fields if dbType is mongodb
+  if (dbType === 'mongodb') {
+    sourceConfig.connectionUri = strOrNull('bkp-src-connection-uri') || '';
+    sourceConfig.authDatabase = strOrNull('bkp-src-auth-database') || 'admin';
+  }
+
   return {
     id: _currentBackupJobId || undefined,
     name: strOrNull('bkp-job-name') || 'Unnamed Backup',
-    source: {
-      host: strOrNull('bkp-src-host') || '',
-      port: parseInt(document.getElementById('bkp-src-port')?.value) || 5432,
-      database: strOrNull('bkp-src-database') || '',
-      user: strOrNull('bkp-src-user') || '',
-      password: document.getElementById('bkp-src-password')?.value || '',
-      sslMode: document.getElementById('bkp-src-ssl')?.value || 'disable',
-    },
+    dbType: dbType,  // Add dbType to top level
+    source: sourceConfig,
     format: document.getElementById('bkp-format')?.value || 'custom',
     compression: {
       type: document.getElementById('bkp-compression')?.value || 'gzip',
@@ -1376,6 +1501,14 @@ function applyBackupJobConfig(job) {
   const chk = (id, val) => { const e = document.getElementById(id); if (e) e.checked = !!val; };
 
   set('bkp-job-name', job.name);
+  
+  // Task 14.2: Update loadBackupJob() to populate dbType and MongoDB fields
+  const dbType = job.dbType || 'postgresql';
+  set('bkp-db-type', dbType);
+  
+  // Update form visibility based on dbType
+  updateBackupFormForDbType(dbType);
+  
   if (job.source) {
     set('bkp-src-host', job.source.host);
     set('bkp-src-port', job.source.port || 5432);
@@ -1383,6 +1516,14 @@ function applyBackupJobConfig(job) {
     set('bkp-src-user', job.source.user);
     set('bkp-src-password', job.source.password);
     set('bkp-src-ssl', job.source.sslMode || 'disable');
+    
+    // Populate MongoDB-specific fields if present
+    if (job.source.connectionUri) {
+      set('bkp-src-connection-uri', job.source.connectionUri);
+    }
+    if (job.source.authDatabase) {
+      set('bkp-src-auth-database', job.source.authDatabase);
+    }
   }
   set('bkp-format', job.format || 'custom');
   if (job.compression) {
@@ -1775,20 +1916,46 @@ socket.on('restore:failed', ({ backupId, errorMessage }) => {
 
 // ── Backup: Source DB connection test ─────────────────────────────────
 
-async function testBackupSourceConn() {
-  const cfg = {
-    host:     document.getElementById('bkp-src-host')?.value.trim(),
-    port:     parseInt(document.getElementById('bkp-src-port')?.value) || 5432,
-    database: document.getElementById('bkp-src-database')?.value.trim(),
-    user:     document.getElementById('bkp-src-user')?.value.trim(),
-    password: document.getElementById('bkp-src-password')?.value,
-  };
+// Task 13.1: Implement getBackupConnectionTestPayload()
+function getBackupConnectionTestPayload() {
+  const dbType = document.getElementById('bkp-db-type')?.value || 'postgresql';
+  
+  if (dbType === 'mongodb') {
+    // MongoDB uses Connection URI
+    return {
+      dbType: 'mongodb',
+      connectionUri: document.getElementById('bkp-src-connection-uri')?.value.trim() || '',
+      authDatabase: document.getElementById('bkp-src-auth-database')?.value.trim() || 'admin',
+    };
+  } else {
+    // PostgreSQL, MySQL, MariaDB use individual fields
+    return {
+      dbType: dbType,
+      host: document.getElementById('bkp-src-host')?.value.trim() || '',
+      port: parseInt(document.getElementById('bkp-src-port')?.value) || 5432,
+      database: document.getElementById('bkp-src-database')?.value.trim() || '',
+      user: document.getElementById('bkp-src-user')?.value.trim() || '',
+      password: document.getElementById('bkp-src-password')?.value || '',
+    };
+  }
+}
 
+// Task 13.2: Update Test button to use /api/backup/test-db-connection endpoint
+async function testBackupSourceConn() {
+  const payload = getBackupConnectionTestPayload();
+  const dbType = payload.dbType || 'postgresql';
+
+  // Validate required fields based on dbType
   const missing = [];
-  if (!cfg.host)     missing.push('host');
-  if (!cfg.database) missing.push('database');
-  if (!cfg.user)     missing.push('username');
-  if (!cfg.password) missing.push('password');
+  if (dbType === 'mongodb') {
+    if (!payload.connectionUri) missing.push('connection URI');
+  } else {
+    if (!payload.host)     missing.push('host');
+    if (!payload.database) missing.push('database');
+    if (!payload.user)     missing.push('username');
+    if (!payload.password) missing.push('password');
+  }
+  
   if (missing.length > 0) {
     appendLog('error', `Backup source test: missing required fields — ${missing.join(', ')}`);
     return;
@@ -1799,16 +1966,19 @@ async function testBackupSourceConn() {
   if (lbl) lbl.textContent = '…';
   if (dot) { dot.style.background = '#fbbf24'; dot.title = 'Testing…'; }
 
-  const res = await fetch('/api/db/test-connection', {
+  const res = await fetch('/api/backup/test-db-connection', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config: cfg }),
+    body: JSON.stringify(payload),
   }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
 
   if (lbl) lbl.textContent = 'Test';
   if (res.ok) {
     if (dot) { dot.style.background = '#34d399'; dot.title = 'Connected'; }
-    appendLog('success', `Backup source DB connected — ${cfg.host}/${cfg.database}`);
+    const connStr = dbType === 'mongodb' 
+      ? payload.connectionUri.split('@')[1] || payload.connectionUri 
+      : `${payload.host}/${payload.database}`;
+    appendLog('success', `Backup source DB connected — ${connStr}${res.version ? ' (' + res.version + ')' : ''}`);
   } else {
     if (dot) { dot.style.background = '#f87171'; dot.title = res.error || 'Failed'; }
     appendLog('error', `Backup source DB failed — ${res.error || 'Unknown error'}`);

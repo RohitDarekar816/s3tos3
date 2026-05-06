@@ -20,7 +20,7 @@ import { initJobManager, addJob, getActiveJobs, updateJobProgress, removeJob, pa
 import { getHistory, clearHistory } from './src/history.js';
 import { listCheckpoints, removeCheckpoint } from './src/checkpoint.js';
 import { sendWebhook, sendEmail } from './src/notifier.js';
-import { initBackupEngine, startBackup, startRestore, verifyBackup, applyRetention, rotateKey, validateFormat, validateCompressionLevel } from './src/backupEngine.js';
+import { initBackupEngine, startBackup, startRestore, verifyBackup, applyRetention, rotateKey, validateFormat, validateCompressionLevel, getDriver } from './src/backupEngine.js';
 import { listBackupJobs, getBackupJob, createBackupJob, updateBackupJob, deleteBackupJob } from './src/backupJobStore.js';
 import { listCatalog, getCatalogRecord, updateCatalogRecord } from './src/backupCatalog.js';
 import { initScheduler, scheduleJob, unscheduleJob, rescheduleJob } from './src/backupScheduler.js';
@@ -633,6 +633,43 @@ app.post('/api/backup/test-notification', apiLimiter, async (req, res) => {
   const errorMsg   = [webhookErr, emailErr].filter(Boolean).join('; ');
 
   res.json({ ok: anyOk, results, error: errorMsg || undefined });
+});
+
+// ── Multi-Database Connection Testing (Task 7.1) ──────────────────────────
+
+app.post('/api/backup/test-db-connection', testLimiter, async (req, res) => {
+  const { dbType, host, port, database, user, password, connectionUri } = req.body;
+
+  // Validate dbType and get the appropriate driver
+  let driver, resolvedType;
+  try {
+    const result = getDriver(dbType);
+    driver = result.driver;
+    resolvedType = result.resolvedType;
+  } catch (err) {
+    // getDriver throws with status 400 for unsupported dbType
+    return res.status(err.status || 400).json({ ok: false, error: err.message });
+  }
+
+  // Build config object based on database type
+  let config;
+  if (resolvedType === 'mongodb') {
+    // MongoDB uses connectionUri
+    if (!connectionUri) {
+      return res.status(400).json({ ok: false, error: 'Missing required field: connectionUri' });
+    }
+    config = { connectionUri };
+  } else {
+    // PostgreSQL, MySQL, MariaDB use individual connection parameters
+    if (!host || !database || !user || !password) {
+      return res.status(400).json({ ok: false, error: 'Missing required fields: host, database, user, password' });
+    }
+    config = { host, port, database, user, password };
+  }
+
+  // Call driver's testConnection method
+  const result = await driver.testConnection(config);
+  res.json(result);
 });
 
 // ── Backup Catalog (Task 10.4) ─────────────────────────────────────────────

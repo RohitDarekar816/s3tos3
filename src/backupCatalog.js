@@ -93,14 +93,20 @@ export function getCatalogRecord(backupId) {
 
 /**
  * Add a new record to the catalog and persist.
+ * Accepts an optional `dbType` field. If not provided, defaults to 'postgresql'.
  * @param {object} record  A BackupCatalogRecord object
  * @returns {object} The stored record
  */
 export function createCatalogRecord(record) {
   const records = load();
-  records.push(record);
+  // Ensure dbType is present, default to 'postgresql' for backward compatibility
+  const recordWithDbType = {
+    ...record,
+    dbType: record.dbType || 'postgresql',
+  };
+  records.push(recordWithDbType);
   persist(records);
-  return record;
+  return recordWithDbType;
 }
 
 /**
@@ -121,6 +127,7 @@ export function updateCatalogRecord(backupId, updates) {
 
 /**
  * Return all catalog records sorted by `startedAt` descending, with secrets redacted.
+ * Ensures all records have a `dbType` field, defaulting to 'postgresql' for backward compatibility.
  * @returns {object[]}
  */
 export function listCatalog() {
@@ -131,7 +138,14 @@ export function listCatalog() {
     const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;
     return tb - ta; // descending
   });
-  return sorted.map(redactSecrets);
+  return sorted.map((record) => {
+    const redacted = redactSecrets(record);
+    // Ensure dbType is present, default to 'postgresql' for backward compatibility
+    return {
+      ...redacted,
+      dbType: redacted.dbType || 'postgresql',
+    };
+  });
 }
 
 /**
